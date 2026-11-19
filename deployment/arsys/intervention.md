@@ -356,3 +356,96 @@ los trabajos aunque ese cierre falle. El error se propaga al coordinador,
 que conserva la recuperación pendiente. Las pruebas sintéticas verifican
 la persistencia de la intervención incluso tras un reintento autorizado
 fallido y comprueban archivos vecinos de producción y `/sorteos`.
+
+## Preparación del lote definitivo — inspección ejecutada como root
+
+Del último informe se incorporan dos datos: la sonda se ejecutó como
+root y se contabilizaron **15 rutas competidoras**. En esa salida
+`writable_by_probe=true` describe la identidad lectora privilegiada.
+Queda descartado como prueba de escritura general o de la futura
+cuenta de staging. La salida del inspector identifica ahora ese contexto.
+No se repite la inspección. El coordinador rechaza una intervención de
+staging ejecutada como root, aunque el digest coincida.
+
+### Identidad, permisos y delegación
+
+- **Identidad propuesta:** cuenta de servicio y grupo exclusivos de staging,
+  cuyos nombres y UID/GID se fijarán tras comprobar colisiones y dependencias
+  de Plesk. Gunicorn y los trabajos de staging quedan sin grupos compartidos
+  que concedan escritura en producción o en la aplicación histórica. El
+  operador usa una identidad de staging no privilegiada. Los comandos
+  administrativos se delegan por acción y destino.
+- **Padres y datos:** los ancestros del árbol facilitan tránsito, sin escritura
+  para staging. Dar lectura a código, runtime y recursos. Dar escritura solo
+  a las rutas canónicas revisadas de datos de staging, incluidos los
+  directorios donde SQLite crea auxiliares. Inventariar grupos, ACL de
+  acceso y por defecto, montajes y alias antes de decidir el cambio.
+  Sin cambios recursivos de propiedad sobre el árbol compartido.
+- **Control y unidad:** crear solo el control de staging ausente con
+  propietario operativo y acceso de consulta del marcador para Nginx,
+  sin escritura del proxy. Aplicar a `rifas-pruebas.service` el confinamiento
+  definido en el [drop-in de ejemplo](staging-isolation.service.example).
+  Revisar la unidad activa y la prioridad de sus drop-ins antes de fijar el
+  nombre del fichero nuevo o reemplazado. Conservar el mismo baseline.
+- **Delegación:** conceder exclusivamente las acciones de parada y arranque
+  requeridas para `rifas-pruebas.service`, con argumentos cerrados.
+  Denegar producción, `/sorteos`, recargas compartidas y control genérico
+  de systemd. Las operaciones de aprovisionamiento con privilegios son
+  aprobadas y acotadas aparte. Ningún permiso de root general se transfiere
+  al coordinador. Demostrar la denegación desde el contexto efectivo del
+  operador, servicio y trabajadores, sin intentar modificar ámbitos ajenos.
+
+### Clasificación de rutas y escritores
+
+Las 15 rutas son un recuento, no quince rutas identificadas en la información
+recibida. La [matriz de revisión](evidence-and-inverses.example.json) reserva
+15 posiciones pendientes. Conciliar cada posición con el informe saneado
+hasta disponer de archivo y línea, precedencia real, destino y alcance de
+Basic y mantenimiento. Clasificar como entrada de staging, descarte probado
+o pendiente. Para cada entrada de staging, incluir la sonda HTTPS final;
+para cada descarte, conservar su evidencia. Revisar alias, redirecciones,
+servidores predeterminados, `location` por expresión o nombrados, includes
+heredados, proxy indirecto y acceso directo a 8768 antes de cerrar el mapa.
+
+En Apache queda por contrastar la configuración efectiva de Plesk, incluidas
+reglas personalizadas y rutas que esquiven Nginx. En Plesk queda por verificar
+la vista autorizada de tareas programadas y contrastarla con cron de usuario
+y con el grafo indirecto de systemd: arranque, parada, reinicio, timers y
+sockets. Vincular cada escritor con una pausa comprobable. Un vínculo no
+resuelto con producción o `/sorteos` bloquea el lote.
+
+### Inventario del lote y recuperación
+
+La matriz registra los objetivos, metadatos que deben capturarse y el
+inverso de cada cambio. Cada objetivo debe convertirse en una ruta o acción
+exacta antes de firmar. Registrar existencia previa, contenido o huella,
+permisos y ACL y, cuando aplique, estado activo y de habilitación. El
+respaldo privado incluye el manifiesto y sus huellas verificadas antes del
+cierre. Seleccionar y comprobar previamente el mecanismo capaz de restaurar
+ambos tipos de ACL: el diagnóstico de `getfacl` ausente no autoriza a omitirlas
+ni a instalar una herramienta. Conservar originales e inversos fuera del
+ámbito modificado. No volcar credenciales de Nginx ni su fichero Basic al
+informe.
+
+Completar el ejemplar de esa matriz como
+`/srv/rifas-deploy/staging/reviewed/evidence-and-inverses.json` y añadir su
+huella al [lote único](intervention.example.json) junto con las huellas de
+los insumos efectivos. Es evidencia de revisión que el coordinador existente
+verificará como archivo del lote. No despliega ni ejecuta acciones por sí
+misma. No sustituir `REVIEW_REQUIRED`, el digest fijado ni las URLs
+pendientes con supuestos.
+
+El lote conserva `auth_basic` y reutiliza la barrera existente solo si su
+alcance se demuestra. Verificar cierre, drenaje, aislamiento y reapertura
+desde todas las entradas del mapa. Un fallo conserva la intervención
+pendiente; si la barrera no se confirma, registrar `publication=unverified`.
+La recuperación restaura el inventario anterior, elimina solo lo creado
+si es seguro y comprueba el baseline y la autenticación antes de reabrir.
+La copia externa y su recuperación siguen siendo condiciones separadas.
+
+Antes de poder ejecutar, faltan la matriz de rutas con Apache, el mapa de
+escritores con Plesk, los permisos y delegación efectivos, la cobertura
+de la barrera y la lista final de cambios e inversos con respaldo
+verificable. Solo entonces se fija el digest y se solicita aprobación
+expresa. Una recarga compartida requiere su propia autorización, y una
+recuperación o despliegue posterior requieren las suyas.

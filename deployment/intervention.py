@@ -106,6 +106,8 @@ class Intervention:
         self.deployment.event("intervention_dependencies_checked")
 
     def verify_review(self):
+        if self.deployment.name == "staging" and os.geteuid() == 0:
+            raise ValueError("Ejecutar la intervención con la identidad operativa de staging, no como root")
         if self.deployment.name == "staging" and (
             self.deployment.config.get("intervention_reviewed_digest") != self.fingerprint
         ):
@@ -194,11 +196,11 @@ class Intervention:
 
     def execute(self, approval, *, recovering=False):
         deployment = self.deployment
+        self.verify_review()
         with deployment.lock():
             if deployment.pending.exists():
                 raise ValueError("Hay un despliegue pendiente")
             previous = self.get_pending()
-            self.verify_review()
             self.verify_files()
             if recovering:
                 if previous is None or previous["digest"] != self.fingerprint:

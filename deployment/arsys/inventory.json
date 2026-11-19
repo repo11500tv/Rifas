@@ -55,6 +55,13 @@
             "inheritance_from_effective_http_vhost"
           ]
         }
+      },
+      "final_probe_reported": {
+        "source": "Resultados comunicados por el usuario de la última inspección; sin consulta desde Codex",
+        "probe_effective_identity": "root",
+        "writable_by_probe_interpretation": "Observed for root only; not evidence of write access by the future identity",
+        "nginx_competing_route_count": 15,
+        "competing_route_details_available_for_review": false
       }
     },
     "legacy": {

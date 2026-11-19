@@ -11,7 +11,8 @@
     "/srv/rifas-deploy/staging/reviewed/verify": "REVIEW_REQUIRED",
     "/srv/rifas-deploy/staging/reviewed/rollback": "REVIEW_REQUIRED",
     "/srv/rifas-deploy/staging/reviewed/verify_rollback": "REVIEW_REQUIRED",
-    "/srv/rifas-deploy/staging/reviewed/reopen": "REVIEW_REQUIRED"
+    "/srv/rifas-deploy/staging/reviewed/reopen": "REVIEW_REQUIRED",
+    "/srv/rifas-deploy/staging/reviewed/evidence-and-inverses.json": "REVIEW_REQUIRED"
   },
   "steps": {
     "validate": [

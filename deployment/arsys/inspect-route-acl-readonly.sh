@@ -660,7 +660,8 @@ def permission_delegation_final(services):
 
 
 def final_inspection():
-    emit("inspection", read_only=True, unresolved_only=True, certification=False)
+    emit("inspection", read_only=True, unresolved_only=True, certification=False,
+         probe_is_root=os.geteuid() == 0, write_access_scope="probe_identity_only")
     proxy_final(nginx_entrypoint())
     services = dependencies_final()
     writers_final()

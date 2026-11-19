@@ -1,0 +1,217 @@
+{
+  "status": "blocked",
+  "probe_identity": "root",
+  "probe_write_access_valid_for_future_identity": false,
+  "stage_unit": "rifas-pruebas.service",
+  "excluded": [
+    "rifas-platform.service",
+    "/var/www/vhosts/dealfonso.com/sorteos"
+  ],
+  "identity": {
+    "user": null,
+    "group": null,
+    "operator": null,
+    "delegation_policy": null,
+    "effective_permission_evidence": null,
+    "mount_namespace_evidence": null
+  },
+  "nginx_candidates_count": 15,
+  "nginx_candidate_required_fields": [
+    "file_reference",
+    "line",
+    "effective_match",
+    "target",
+    "basic_scope",
+    "maintenance_scope",
+    "disposition",
+    "review_evidence"
+  ],
+  "nginx_candidate_register": [
+    {
+      "review_slot": "N01",
+      "disposition": "unclassified",
+      "evidence": null
+    },
+    {
+      "review_slot": "N02",
+      "disposition": "unclassified",
+      "evidence": null
+    },
+    {
+      "review_slot": "N03",
+      "disposition": "unclassified",
+      "evidence": null
+    },
+    {
+      "review_slot": "N04",
+      "disposition": "unclassified",
+      "evidence": null
+    },
+    {
+      "review_slot": "N05",
+      "disposition": "unclassified",
+      "evidence": null
+    },
+    {
+      "review_slot": "N06",
+      "disposition": "unclassified",
+      "evidence": null
+    },
+    {
+      "review_slot": "N07",
+      "disposition": "unclassified",
+      "evidence": null
+    },
+    {
+      "review_slot": "N08",
+      "disposition": "unclassified",
+      "evidence": null
+    },
+    {
+      "review_slot": "N09",
+      "disposition": "unclassified",
+      "evidence": null
+    },
+    {
+      "review_slot": "N10",
+      "disposition": "unclassified",
+      "evidence": null
+    },
+    {
+      "review_slot": "N11",
+      "disposition": "unclassified",
+      "evidence": null
+    },
+    {
+      "review_slot": "N12",
+      "disposition": "unclassified",
+      "evidence": null
+    },
+    {
+      "review_slot": "N13",
+      "disposition": "unclassified",
+      "evidence": null
+    },
+    {
+      "review_slot": "N14",
+      "disposition": "unclassified",
+      "evidence": null
+    },
+    {
+      "review_slot": "N15",
+      "disposition": "unclassified",
+      "evidence": null
+    }
+  ],
+  "publication": {
+    "ordered_includes_review": null,
+    "apache_review": null,
+    "direct_8768_review": null,
+    "verified_https_urls": null,
+    "basic_preservation": null,
+    "maintenance_coverage": null
+  },
+  "writers": {
+    "systemd_transitive_review": null,
+    "user_cron_review": null,
+    "plesk_scheduler_review": null,
+    "pause_and_drain_evidence": null
+  },
+  "changes": [
+    {
+      "id": "dedicated_identity",
+      "target": "staging user and group only",
+      "capture": [
+        "existence",
+        "uid/gid",
+        "supplementary_groups",
+        "ownership"
+      ],
+      "inverse": "restore previous identity and memberships; remove only identities created by the batch after restoring ownership"
+    },
+    {
+      "id": "data_permissions",
+      "target": "approved descendants of staging only",
+      "capture": [
+        "canonical_paths",
+        "mount_id",
+        "uid/gid",
+        "mode",
+        "access_acl",
+        "default_acl"
+      ],
+      "inverse": "restore ownership, modes and both ACL types on the recorded paths only"
+    },
+    {
+      "id": "control",
+      "target": "/srv/rifas-deploy/staging/control",
+      "capture": [
+        "existence",
+        "owner",
+        "mode",
+        "acl",
+        "marker",
+        "selector"
+      ],
+      "inverse": "restore prior control and gate state; remove only objects created by the batch after verified rollback"
+    },
+    {
+      "id": "unit",
+      "target": "rifas-pruebas.service",
+      "capture": [
+        "effective_unit",
+        "intended_dropin",
+        "enabled_state",
+        "active_state",
+        "original_exec_and_identity"
+      ],
+      "inverse": "restore the exact drop-in and unit state without changing any other unit"
+    },
+    {
+      "id": "delegation",
+      "target": "reviewed policy for rifas-pruebas.service only",
+      "capture": [
+        "existence",
+        "policy_hash",
+        "mode",
+        "owner"
+      ],
+      "inverse": "restore the exact policy or remove only the newly added entry"
+    },
+    {
+      "id": "publication",
+      "target": "existing staging barrier; staging-only proxy change only if justified",
+      "capture": [
+        "effective_sources",
+        "basic_metadata",
+        "marker_state",
+        "proxy_file_hashes"
+      ],
+      "inverse": "restore the exact changed staging sources and verify authentication and gate before reopening"
+    },
+    {
+      "id": "schedulers",
+      "target": "only enumerated staging jobs",
+      "capture": [
+        "identity",
+        "enabled_state",
+        "scheduling_source",
+        "restart_policy"
+      ],
+      "inverse": "restore the previous schedule and run state of only those jobs"
+    }
+  ],
+  "backup": {
+    "location": null,
+    "signed_manifest_with_hashes": null,
+    "acl_restore_method": null,
+    "external_recovery_evidence": null
+  },
+  "approvals": {
+    "intervention_digest": null,
+    "intervention": null,
+    "shared_reload_if_required": null,
+    "external_recovery": null,
+    "deployment": null
+  }
+}

@@ -14,7 +14,7 @@ import tempfile
 from threading import Thread
 from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import unittest
 
 from deployment import approval, backup_integral, schema
@@ -591,7 +591,12 @@ if (root / f"fail-{step}").exists():
         with self.assertRaisesRegex(ValueError, "lote fijado"):
             intervention.verify_review()
         self.deployment.config["intervention_reviewed_digest"] = intervention.fingerprint
-        intervention.verify_review()
+        with patch("deployment.intervention.os.geteuid", return_value=0):
+            with self.assertRaisesRegex(ValueError, "no como root"):
+                intervention.execute(None)
+            self.assertFalse((self.deployment.state / "lock").exists())
+        with patch("deployment.intervention.os.geteuid", return_value=1000):
+            intervention.verify_review()
         self.deployment.name = "synthetic"
 
         grant = self.approval("intervene", fingerprint=intervention.fingerprint, signer="staging")
