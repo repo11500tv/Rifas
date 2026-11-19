@@ -141,7 +141,7 @@ class Structure:
         if self.control_root is not None:
             paths.append(self.control_root)
         review_files = [*self.settings["review_files"]]
-        review_files.extend(self.profile[key] for key in ("allowed_signers", "approval_signers") if key in self.profile)
+        review_files.extend(self.profile[key] for key in ("allowed_signers", "approval_signers", "intervention_signers") if key in self.profile)
         for item in review_files:
             path = checked_path(item)
             paths.append(path)

@@ -20,6 +20,8 @@ import unittest
 from deployment import approval, backup_integral, schema
 from deployment.artifact import build
 from deployment.deploy import Deployment
+from deployment.intervention import Intervention, STEPS
+from deployment.backup_sqlite import sha256
 from platform_app.raffle_schema import SCHEMA_RAFFLES
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -511,6 +513,79 @@ raise SystemExit(7)
         self.assertEqual((self.ops / "runtime.lock").read_text(), "runtime synthetic")
         self.assertEqual((self.baseline / "wsgi.py").read_bytes(), original_code)
         self.assertFalse((self.ops / "untracked").exists())
+
+    def intervention(self):
+        source = self.folder / "steps.py"
+        source.write_text("""
+import os
+from pathlib import Path
+import sys
+step = sys.argv[1]
+backup = Path(os.environ["RIFAS_INTERVENTION_BACKUP"])
+root = Path(os.environ["RIFAS_DATA_ROOT"])
+config = root / "settings.synthetic"
+gate = root / "gate.synthetic"
+if step == "backup":
+    (backup / "config").write_bytes(config.read_bytes())
+elif step == "verify_backup":
+    assert (backup / "config").read_text() == "before"
+elif step == "close":
+    gate.touch()
+elif step == "apply":
+    assert gate.exists()
+    config.write_text("after")
+elif step == "verify":
+    assert config.read_text() == "after"
+elif step == "rollback":
+    assert gate.exists()
+    config.write_bytes((backup / "config").read_bytes())
+elif step == "verify_rollback":
+    assert config.read_text() == "before"
+elif step == "reopen":
+    gate.unlink(missing_ok=True)
+if (root / f"fail-{step}").exists():
+    raise SystemExit(4)
+""")
+        (self.root / "settings.synthetic").write_text("before")
+        self.config["intervention_signers"] = str(self.operator_signers["staging"])
+        recipe = self.folder / "intervention.json"
+        recipe.write_text(json.dumps({
+            "format": 1, "environment": self.deployment.name, "installation": str(self.root),
+            "files": {str(source): sha256(source), sys.executable: sha256(Path(sys.executable))},
+            "steps": {step: [sys.executable, "-I", "-B", str(source), step] for step in STEPS},
+        }))
+        return Intervention(self.deployment, recipe)
+
+    def test_intervention_is_separately_approved_and_rolls_back_partial_mutation(self):
+        intervention = self.intervention()
+        with self.assertRaisesRegex(ValueError, "caducada o fuera de alcance"):
+            intervention.execute(self.approval("intervene", fingerprint=intervention.fingerprint))
+        (self.root / "fail-apply").touch()
+        grant = self.approval("intervene", fingerprint=intervention.fingerprint, signer="staging")
+        with self.assertRaisesRegex(RuntimeError, "apply"):
+            intervention.execute(grant)
+        self.assertEqual((self.root / "settings.synthetic").read_text(), "before")
+        self.assertFalse((self.root / "gate.synthetic").exists())
+        self.assertFalse(intervention.pending.exists())
+
+    def test_pending_intervention_blocks_deploy_and_only_reopens_after_commit(self):
+        intervention = self.intervention()
+        (self.root / "fail-reopen").touch()
+        grant = self.approval("intervene", fingerprint=intervention.fingerprint, signer="staging")
+        with self.assertRaisesRegex(RuntimeError, "reopen"):
+            intervention.execute(grant)
+        journal = self.deployment.status()["intervention"]
+        self.assertEqual(journal["phase"], "committed")
+        with self.assertRaisesRegex(ValueError, "intervención"):
+            self.deployment.plan(self.bundle)
+        with self.assertRaisesRegex(ValueError, "intervención"):
+            self.apply()
+        (self.root / "fail-reopen").unlink()
+        grant = self.approval("recover-intervention", run=journal["run"],
+                              fingerprint=intervention.fingerprint, signer="staging")
+        intervention.execute(grant, recovering=True)
+        self.assertFalse(intervention.pending.exists())
+        self.assertEqual((self.root / "settings.synthetic").read_text(), "after")
 
     def test_structural_writer_guard_blocks_before_snapshot_or_migration(self):
         structure = Mock()

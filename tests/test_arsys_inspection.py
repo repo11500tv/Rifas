@@ -39,3 +39,28 @@ class ArsysInspectionTest(unittest.TestCase):
         self.assertIn({"section": "proxy_route_hint", "file": "vhost_nginx.conf",
                        "route": "/rifas/", "loopback_ports": [8766]}, rows)
         self.assertEqual(rows[0]["bind_port_hints"], [8766])
+
+    def test_pending_inspection_reports_apache_and_dependencies_without_values(self):
+        script = Path(__file__).resolve().parents[1] / "deployment/arsys/inspect-pending-readonly.sh"
+        namespace = {"__name__": "fixture"}
+        exec(compile(shlex.split(script.read_text())[-1], str(script), "exec"), namespace)
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp, contextlib.redirect_stdout(output):
+            profile = Path(temp)
+            (profile / "vhost.conf").write_text(
+                "ServerAlias personal.example.invalid\n"
+                "ProxyPass /rifas/staging/prueba_231 http://secret.example.invalid:8768/\n"
+            )
+            namespace["VHOST"] = profile
+            namespace["read_command"] = lambda *_: (
+                "Requires=rifas-platform.service private-aux.service\n"
+                "EnvironmentFiles=/private/secret-file\n"
+            )
+            namespace["proxy"]()
+            namespace["dependencies"]()
+        contents = output.getvalue()
+        for secret in ("private-aux.service", "secret-file", "personal.example.invalid", "secret.example.invalid"):
+            self.assertNotIn(secret, contents)
+        rows = [json.loads(line) for line in contents.splitlines()]
+        self.assertTrue(any(row.get("backend_8768") and row.get("staging_literal") for row in rows))
+        self.assertTrue(any(row.get("production_reference") for row in rows))

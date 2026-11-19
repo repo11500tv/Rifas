@@ -75,5 +75,6 @@
       "EFFECTIVE_PROXY_PATH_PENDING"
     ],
     "expected_fingerprint": "REVIEW_REQUIRED"
-  }
+  },
+  "intervention_signers": "/srv/rifas-deploy/staging/trust/intervention-signers"
 }

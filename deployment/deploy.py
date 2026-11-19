@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from deployment import approval, backup_integral as snapshot, schema
 from deployment.structure import Structure
+from deployment.intervention import Intervention
 from deployment.artifact import IDENTITY, MANIFEST, NAMESPACE, SIGNATURE, digest, payload_path, platform_version, verify_signature
 from deployment.backup_sqlite import sha256
 from deployment.backup_integral import atomic_json, sync
@@ -149,7 +150,7 @@ class Deployment:
     def check_scope(self, previous, components):
         scopes = snapshot.roots(self.root, previous, components)
         paths = [self.state]
-        for name in ("lock", "events.jsonl", "pending.json", "runs", "used-approvals"):
+        for name in ("lock", "events.jsonl", "pending.json", "runs", "used-approvals", "intervention.json", "interventions"):
             path = self.state / name
             if path.is_symlink() or (path.is_file() and path.stat().st_nlink != 1):
                 raise ValueError(f"Estado del coordinador compartido o inseguro: {path}")
@@ -260,7 +261,13 @@ class Deployment:
             raise ValueError("Espacio insuficiente para release y respaldo SQLite")
         return manifest, fingerprint, databases, active, expected
 
+    def ensure_no_intervention(self):
+        path = self.state / "intervention.json"
+        if path.exists() or path.is_symlink():
+            raise ValueError("Hay una intervención de infraestructura pendiente")
+
     def plan(self, bundle):
+        self.ensure_no_intervention()
         evidence = self.check_operation()
         if self.pending.exists():
             raise ValueError("Hay una ejecución pendiente de recuperar")
@@ -282,6 +289,14 @@ class Deployment:
         return evidence
 
     def status(self):
+        intervention = self.state / "intervention.json"
+        if intervention.is_symlink():
+            raise ValueError("Estado de intervención inseguro")
+        if intervention.is_file():
+            journal = json.loads(intervention.read_text())
+            return {"environment": self.name, "installation": str(self.root), "intervention": {
+                key: journal[key] for key in ("run", "digest", "phase")
+            }}
         if not self.pending.exists():
             return {"environment": self.name, "installation": str(self.root), "pending": None}
         journal = json.loads(self.pending.read_text())
@@ -290,9 +305,14 @@ class Deployment:
         }}
 
     def approve(self, operation, fingerprint, document, run=None):
-        return approval.verified(
-            document, self.approvers, operation, self.name, self.root, fingerprint, run
-        )
+        signers = self.approvers
+        if operation in {"intervene", "recover-intervention"}:
+            if not self.config.get("intervention_signers"):
+                raise ValueError("Faltan las claves independientes de intervención")
+            signers = Path(self.config["intervention_signers"]).resolve(strict=True)
+            if signing_keys(signers) & (signing_keys(self.approvers) | signing_keys(self.signers)):
+                raise ValueError("La autorización de intervención debe ser independiente")
+        return approval.verified(document, signers, operation, self.name, self.root, fingerprint, run)
 
     def consume(self, grant):
         receipts = self.state / "used-approvals"
@@ -352,6 +372,7 @@ class Deployment:
 
     def recover(self, approval):
         with self.lock():
+            self.ensure_no_intervention()
             journal = json.loads(self.pending.read_text())
             grant = self.approve("recover", journal["digest"], approval, journal["run"])
             if self.structure is not None:
@@ -387,6 +408,7 @@ class Deployment:
         original, fingerprint = validate_artifact(bundle, self.signers)
         grant = self.approve("apply", fingerprint, approval)
         with self.lock():
+            self.ensure_no_intervention()
             if self.pending.exists():
                 raise ValueError("Recuperar la ejecución pendiente antes de aplicar")
             self.check_operation()
@@ -454,11 +476,19 @@ def main():
     commands.add_parser("recover").add_argument("--approve", type=Path, required=True)
     commands.add_parser("status")
     commands.add_parser("structure")
+    for action in ("intervene", "recover-intervention"):
+        command = commands.add_parser(action)
+        command.add_argument("--recipe", type=Path, required=True)
+        command.add_argument("--approve", type=Path, required=True)
     args = parser.parse_args()
     try:
         deployment = Deployment(json.loads(args.config.read_text()))
         if args.command == "plan":
             print(json.dumps(deployment.plan(args.artifact.resolve()), sort_keys=True))
+        elif args.command in ("intervene", "recover-intervention"):
+            Intervention(deployment, args.recipe).execute(
+                args.approve, recovering=args.command == "recover-intervention",
+            )
         elif args.command == "structure":
             if deployment.structure is None:
                 raise ValueError("El perfil no define comprobaciones estructurales")
