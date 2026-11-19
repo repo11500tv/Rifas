@@ -76,5 +76,6 @@
     ],
     "expected_fingerprint": "REVIEW_REQUIRED"
   },
-  "intervention_signers": "/srv/rifas-deploy/staging/trust/intervention-signers"
+  "intervention_signers": "/srv/rifas-deploy/staging/trust/intervention-signers",
+  "intervention_reviewed_digest": "REVIEW_REQUIRED"
 }

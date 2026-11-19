@@ -40,9 +40,18 @@ class Intervention:
             if not Path(path).is_absolute() or not re.fullmatch(r"[a-f0-9]{64}", fingerprint):
                 raise ValueError("Entrada de lote inválida")
 
+    def verify_review(self):
+        if self.deployment.name == "staging" and (
+            self.deployment.config.get("intervention_reviewed_digest") != self.fingerprint
+        ):
+            raise ValueError("La intervención no coincide con el lote fijado en el perfil de staging")
+
     def verify_files(self):
         for name, expected in self.files.items():
             path = Path(name)
+            resolved = path.resolve()
+            if any(resolved.is_relative_to(root) for root in self.deployment.protected):
+                raise ValueError("Insumo de intervención dentro de un ámbito protegido")
             if not path.is_file() or sha256(path) != expected:
                 raise ValueError("Cambió un fichero revisado de la intervención")
 
@@ -99,6 +108,7 @@ class Intervention:
             if deployment.pending.exists():
                 raise ValueError("Hay un despliegue pendiente")
             previous = self.get_pending()
+            self.verify_review()
             self.verify_files()
             if recovering:
                 if previous is None or previous["digest"] != self.fingerprint:

@@ -568,6 +568,39 @@ if (root / f"fail-{step}").exists():
         self.assertFalse((self.root / "gate.synthetic").exists())
         self.assertFalse(intervention.pending.exists())
 
+    def test_intervention_excludes_protected_inputs_and_unreviewed_staging_batch(self):
+        intervention = self.intervention()
+        production = self.folder / "production"
+        legacy = self.folder / "sorteos"
+        production.mkdir()
+        legacy.mkdir()
+        self.deployment.protected = (production, legacy)
+        protected = production / "config"
+        historic = legacy / "config"
+        for path in (protected, historic):
+            path.write_text("never touched")
+        alias = self.folder / "outside-input"
+        for path in (protected, historic):
+            alias.symlink_to(path)
+            intervention.files[str(alias)] = sha256(path)
+            with self.assertRaisesRegex(ValueError, "ámbito protegido"):
+                intervention.verify_files()
+            alias.unlink()
+            del intervention.files[str(alias)]
+        self.deployment.name = "staging"
+        with self.assertRaisesRegex(ValueError, "lote fijado"):
+            intervention.verify_review()
+        self.deployment.config["intervention_reviewed_digest"] = intervention.fingerprint
+        intervention.verify_review()
+        self.deployment.name = "synthetic"
+
+        grant = self.approval("intervene", fingerprint=intervention.fingerprint, signer="staging")
+        (self.root / "fail-apply").touch()
+        with self.assertRaisesRegex(RuntimeError, "apply"):
+            intervention.execute(grant)
+        for path in (protected, historic):
+            self.assertEqual(path.read_text(), "never touched")
+
     def test_pending_intervention_blocks_deploy_and_only_reopens_after_commit(self):
         intervention = self.intervention()
         (self.root / "fail-reopen").touch()

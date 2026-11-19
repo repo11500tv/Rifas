@@ -64,3 +64,43 @@ class ArsysInspectionTest(unittest.TestCase):
         rows = [json.loads(line) for line in contents.splitlines()]
         self.assertTrue(any(row.get("backend_8768") and row.get("staging_literal") for row in rows))
         self.assertTrue(any(row.get("production_reference") for row in rows))
+
+    def test_targeted_route_reads_anchor_and_enclosing_rules_without_values(self):
+        script = Path(__file__).resolve().parents[1] / "deployment/arsys/inspect-route-acl-readonly.sh"
+        namespace = {"__name__": "fixture"}
+        exec(compile(shlex.split(script.read_text())[-1], str(script), "exec"), namespace)
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp, contextlib.redirect_stdout(output):
+            profile = Path(temp)
+            (profile / "vhost_nginx.conf").write_text(
+                "\n" * 37 + "server {\n  deny 192.0.2.68;\n"
+                "  location /sensitive-alias {\n    if (-f /sensitive-gate) { return 503; }\n"
+                "    proxy_pass http://127.0.0.1:8768;\n"
+                "  }\n}\n"
+            )
+            namespace["BASE"] = profile
+            namespace["route"]()
+        rows = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(rows[0]["state"], "anchor_parsed")
+        self.assertFalse(rows[0]["effective_verified"])
+        self.assertTrue(any(row.get("directive") == "deny" and row.get("scope") == "server" for row in rows))
+        self.assertTrue(any(row.get("returns_503") and row.get("scope") == "conditional" for row in rows))
+        self.assertNotIn("sensitive-", output.getvalue())
+        self.assertNotIn("192.0.2.68", output.getvalue())
+
+    def test_acl_fallback_reports_effective_write_counts_or_specific_error(self):
+        import errno
+        import struct
+        from unittest.mock import patch
+
+        script = Path(__file__).resolve().parents[1] / "deployment/arsys/inspect-route-acl-readonly.sh"
+        namespace = {"__name__": "fixture"}
+        exec(compile(shlex.split(script.read_text())[-1], str(script), "exec"), namespace)
+        entries = struct.pack("<IHHIHHI", 2, 2, 7, 23456, 16, 5, 0xffffffff)
+        with patch("os.getxattr", return_value=entries):
+            self.assertEqual(namespace["acl_xattr"](Path("/fixture"), "access"),
+                             {"state": "read", "named": 1, "named_effective_write": 0})
+        with patch("os.getxattr", side_effect=OSError(errno.EACCES, "raw diagnostic")):
+            self.assertEqual(namespace["acl_xattr"](Path("/fixture"), "access"), {"state": "path_denied"})
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            self.assertEqual(namespace["acl_tool"](Path("/fixture")), "executable_missing")

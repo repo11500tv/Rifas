@@ -159,3 +159,75 @@ parada y reapertura de staging y cualquier recarga compartida de Nginx
 o Apache. Un ensayo de recuperación externa y un despliegue posterior
 tienen autorizaciones propias. El perfil de release continúa bloqueado
 hasta comprobar aislamiento y recuperación.
+
+## Cierre de 2E — Datos incorporados y verificación puntual
+
+El [inventario reutilizable](inventory.json) recoge la salida comunicada de
+`bd21316`. La referencia `vhost_nginx.conf:42` y el listener local único
+en 8768 son hechos observados. Cinco archivos se examinaron. Ninguna
+consulta ACL dio resultado; el inspector anterior reducía todos los
+fallos a «sin salida» y descartaba el diagnóstico. Por ello aún no se
+puede atribuir el fallo a falta del binario, permisos de ejecución o
+tránsito, error de la herramienta o falta de soporte.
+
+Desde PuTTY y con autorización de lectura, pegar una sola vez el bloque
+completo de [inspect-route-acl-readonly.sh](inspect-route-acl-readonly.sh).
+Este bloque solo reintenta `getfacl` en la raíz de staging para clasificar
+el fallo. Como alternativa consulta los atributos POSIX de acceso y
+por defecto con `os.getxattr`, sin instalar paquetes, usar sudo, escribir
+archivos ni publicar nombres, IDs de las ACL o diagnósticos crudos.
+`attribute_absent` significa que en ese objeto no se observó el atributo;
+no demuestra el acceso efectivo de la cuenta futura ni los permisos en
+los descendientes. Si se deniega el acceso o el sistema de archivos no
+lo admite, mantener la ACL como no verificada.
+
+Para Nginx el bloque parte de la referencia literal a 8768 en la línea 42.
+Si la referencia cambió o la sintaxis no se interpreta de forma segura,
+lo indica y no selecciona otra ruta. Inspecciona el bloque que contiene
+la referencia, sus ancestros, condiciones de mantenimiento y reglas por
+método, y extrae indicios de los includes directos acotados al vhost.
+Muestra solo tipos de directiva y números de línea. La presencia de
+`deny` o de un `return 503` no certifica su precedencia ni su alcance:
+hay que revisar la herencia, las condiciones, los includes externos o
+dinámicos, la selección del virtual host y las rutas alternativas.
+El bloque no envía peticiones, no abre SQLite ni carga Nginx.
+
+### Permisos que debe verificar el lote
+
+| Ámbito | Diseño mínimo y criterio de aceptación |
+| --- | --- |
+| Padres del vhost, Rifas y staging | La cuenta dedicada dispone solo del tránsito necesario y carece de escritura en los ancestros. Conservar los modos 0755 observados si permiten el tránsito y no hay ACL contrarias. Evitar cambios recursivos en el padre común. |
+| Staging, datos y entorno de ejecución | Dar lectura o tránsito en código, recursos y runtime. Limitar escritura a los directorios de datos de staging y a los persistentes declarados. Los directorios de SQLite deben permitir crear sus auxiliares. Plesk y Nginx conservan solo los permisos de lectura o tránsito que necesiten. Validar también ACL por defecto y permisos de descendientes. |
+| Directorio de control | Aprovisionar `/srv/rifas-deploy/staging/control` en el lote autorizado. El operador de staging controla el marcador y el selector; Nginx puede consultar el marcador sin escribirlo. El entorno de producción tiene un control independiente. |
+| Producción y aplicación histórica | Denegar escritura, cambio de permisos y administración de sus servicios desde las identidades de staging y los procesos auxiliares. Conservar las protecciones que excluyen el subárbol de staging en el perfil de producción. Verificar grupos, ACL, montajes y delegación efectiva, además de las rutas. |
+| systemd | Mantener `KillMode=control-group`; añadir el confinamiento revisado con `ProtectSystem=strict`, rutas de escritura explícitas y ámbitos ajenos inaccesibles. Comprobar que Plesk y los procesos auxiliares siguen operativos. Una inspección sin referencias directas a otros servicios no descarta acoplamientos indirectos ni tareas programadas. |
+
+### Criterio para autorizar la transacción
+
+Mantener un único lote `intervene` con validación, respaldo comprobado,
+cierre, aplicación, verificación y reversión. Además de la firma de
+intervención, el perfil local de staging exige que su
+`intervention_reviewed_digest` coincida con el SHA-256 del lote exacto.
+Se rechazan insumos que resuelven dentro de los ámbitos protegidos.
+Las pruebas locales verifican estos rechazos y que una reversión sintética
+conserva intactos los archivos vecinos de producción y `/sorteos`.
+Estas defensas controlan selección e insumos. Los comandos administrativos
+requieren su propia delegación acotada y hay que comprobarla en Arsys
+para demostrar el aislamiento efectivo.
+
+Los marcadores del ejemplo permanecen intencionadamente sin resolver.
+Antes de firmar el lote faltan: el resultado y alcance de la lectura ACL;
+la publicación y la barrera efectivas, incluidas las entradas alternativas;
+el inventario de trabajos y dependencias indirectas; la cuenta y
+delegación concretas; y la lista exacta y verificable de cambios y
+restauración. El ensayo de recuperación externa sigue siendo requisito
+previo al despliegue.
+
+Las autorizaciones son separadas: (1) inspección puntual de lectura;
+(2) captura de configuración y permisos para reversión; (3) creación
+de la identidad y control de staging, cambios de ACL, unidad y proxy,
+parada y reapertura de staging; (4) cualquier recarga compartida de
+Nginx, Plesk o Apache, si se demuestra imprescindible; (5) prueba de
+recuperación externa y eventual despliegue. La aprobación firmada debe
+vincularse al lote final y su digest; si hace falta recuperar una
+interrupción, se requiere `recover-intervention` vinculada a su ejecución.

@@ -11,7 +11,29 @@
       "root": "/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231",
       "unit": "rifas-pruebas.service",
       "port": 8768,
-      "active_at_inspection": true
+      "active_at_inspection": true,
+      "inspection_2e": {
+        "source": "Resultado de la inspección de solo lectura bd21316 facilitado por el usuario",
+        "proxy_reference": {
+          "file": "vhost_nginx.conf",
+          "line": 42,
+          "backend_port": 8768
+        },
+        "listener": {
+          "count": 1,
+          "loopback_only": true
+        },
+        "proxy_files_reviewed": 5,
+        "acl": {
+          "readable_count": 0,
+          "failure_reason": "unknown"
+        },
+        "main_directory_mode": "0755",
+        "control_directory_exists": false,
+        "kill_mode": "control-group",
+        "protect_system_strict": false,
+        "direct_dependency_references_to_production_or_legacy_detected": false
+      }
     },
     "legacy": {
       "root": "/var/www/vhosts/dealfonso.com/sorteos",
@@ -26,7 +48,9 @@
     "operating_system_write_and_service_isolation",
     "writer_and_scheduler_coverage",
     "effective_sqlite_contract_and_catalog",
-    "complete_external_restore"
+    "complete_external_restore",
+    "acl_query_failure_and_effective_future_identity",
+    "staging_control_directory_and_systemd_hardening"
   ],
   "checked_each_operation": [
     "paths_and_acl_metadata",
