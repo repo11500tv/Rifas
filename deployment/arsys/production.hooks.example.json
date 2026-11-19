@@ -2,7 +2,8 @@
   "scope": {
     "environment": "production",
     "data_root": "/var/www/vhosts/dealfonso.com/rifas",
-    "baseline": "/var/www/vhosts/dealfonso.com/rifas"
+    "baseline": "/var/www/vhosts/dealfonso.com/rifas",
+    "control_root": "/srv/rifas-deploy/production/control"
   },
   "systemd_unit": "rifas-platform.service",
   "gate": "/srv/rifas-deploy/production/control/maintenance",

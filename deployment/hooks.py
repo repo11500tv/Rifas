@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import stat
 from pathlib import Path
 import subprocess
 import time
@@ -35,8 +36,16 @@ class Hooks:
             for path in (self.data_root, self.baseline):
                 if not path.is_absolute() or path.resolve() != path or path.is_relative_to("/root"):
                     raise ValueError("Raíz de hooks no canónica")
+        self.control_root = Path(self.scope["control_root"]) if self.scope and "control_root" in self.scope else None
+        if self.control_root is not None and (
+            not self.control_root.is_absolute() or self.control_root.resolve() != self.control_root
+            or self.control_root == Path("/") or self.control_root.is_relative_to("/root")
+            or self.control_root.is_relative_to(self.data_root) or self.data_root.is_relative_to(self.control_root)
+            or any(path.parent != self.control_root for path in (self.gate, self.target))
+        ):
+            raise ValueError("Barrera o selector fuera del directorio de control del entorno")
         self.unit = settings.get("systemd_unit")
-        if self.unit is not None and (not self.scope or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*\.service", self.unit)
+        if self.unit is not None and (not self.control_root or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*\.service", self.unit)
                                       or {"start", "stop"} & settings.keys()):
             raise ValueError("Unidad systemd inválida o combinada con comandos de supervisor")
         gunicorn = settings["gunicorn"]
@@ -94,6 +103,8 @@ class Hooks:
         if self.scope is not None:
             if os.environ.get("RIFAS_DEPLOY_ENVIRONMENT") != self.scope["environment"]:
                 raise ValueError("El hook pertenece a otro entorno")
+            if self.control_root is not None and os.environ.get("RIFAS_CONTROL_ROOT") != str(self.control_root):
+                raise ValueError("Directorio de control distinto del autorizado por el coordinador")
             self.check_scope(os.environ.get("RIFAS_DATA_ROOT", ""), os.environ.get("RIFAS_RELEASE_ROOT"))
 
     def status(self, url):
@@ -116,8 +127,14 @@ class Hooks:
 
     def drain(self):
         self.check_invocation()
-        with self.gate.open("a") as gate:
-            os.fsync(gate.fileno())
+        fd = os.open(self.gate, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o644)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError("Marcador de mantenimiento compartido o inseguro")
+            os.fsync(fd)
+        finally:
+            os.close(fd)
         sync(self.gate.parent)
         for url in self.public_urls:
             self.wait(url, 503)

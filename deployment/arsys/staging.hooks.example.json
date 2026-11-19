@@ -2,7 +2,8 @@
   "scope": {
     "environment": "staging",
     "data_root": "/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231",
-    "baseline": "/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231"
+    "baseline": "/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231",
+    "control_root": "/srv/rifas-deploy/staging/control"
   },
   "systemd_unit": "rifas-pruebas.service",
   "gate": "/srv/rifas-deploy/staging/control/maintenance",

@@ -66,15 +66,19 @@ class ArsysProfileTest(unittest.TestCase):
             root = Path(temporary)
             profile = json.loads((Path(__file__).resolve().parents[1] / "deployment/arsys/"
                                   "staging.hooks.example.json").read_text())
-            profile.update(gate=str(root / "gate"), target=str(root / "target"),
+            data = root / "data"
+            control_root = root / "control"
+            data.mkdir()
+            control_root.mkdir()
+            profile.update(gate=str(control_root / "gate"), target=str(control_root / "target"),
                            closed_url="https://sandbox.invalid/staging/health",
                            additional_closed_urls=["https://sandbox.invalid/alias/health"],
                            private_url="http://127.0.0.1:8766/health")
-            profile["scope"].update(data_root=str(root), baseline=str(root))
+            profile["scope"].update(data_root=str(data), baseline=str(data), control_root=str(control_root))
             profile["gunicorn"]["python"] = "/usr/bin/python3"
             hooks = Hooks(profile)
-            good = {"RIFAS_DEPLOY_ENVIRONMENT": "staging", "RIFAS_DATA_ROOT": str(root),
-                    "RIFAS_RELEASE_ROOT": str(root)}
+            good = {"RIFAS_DEPLOY_ENVIRONMENT": "staging", "RIFAS_DATA_ROOT": str(data),
+                    "RIFAS_RELEASE_ROOT": str(data), "RIFAS_CONTROL_ROOT": str(control_root)}
             with patch.dict(os.environ, {**good, "RIFAS_DEPLOY_ENVIRONMENT": "production"}), \
                     patch("deployment.hooks.subprocess.run") as control:
                 with self.assertRaisesRegex(ValueError, "otro entorno"):
@@ -84,6 +88,13 @@ class ArsysProfileTest(unittest.TestCase):
             with patch.dict(os.environ, {**good, "RIFAS_RELEASE_ROOT": str(root.parent)}):
                 with self.assertRaisesRegex(ValueError, "release"):
                     hooks.activate()
+            with patch.dict(os.environ, {**good, "RIFAS_CONTROL_ROOT": str(root)}), \
+                    patch("deployment.hooks.subprocess.run") as control:
+                with self.assertRaisesRegex(ValueError, "Directorio de control"):
+                    hooks.drain()
+                control.assert_not_called()
+            with self.assertRaisesRegex(ValueError, "fuera del directorio"):
+                Hooks({**profile, "gate": str(root / "foreign-side")})
             with patch.dict(os.environ, good), patch.object(hooks, "wait") as wait, \
                     patch("deployment.hooks.subprocess.run") as control:
                 hooks.drain()

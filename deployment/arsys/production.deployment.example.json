@@ -52,5 +52,6 @@
       "--marker",
       "MARKER_PENDING"
     ]
-  }
+  },
+  "control_root": "/srv/rifas-deploy/production/control"
 }

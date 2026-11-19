@@ -99,6 +99,15 @@ class Deployment:
         for path in self.protected:
             if not path.is_absolute() or path.resolve() != path:
                 raise ValueError(f"Ruta protegida no canónica: {path}")
+        self.control_root = Path(config["control_root"]) if "control_root" in config else None
+        if self.control_root is not None and (
+            not self.control_root.is_absolute() or self.control_root.resolve() != self.control_root
+            or self.control_root == Path("/") or self.control_root.is_relative_to("/root")
+            or self.control_root.is_relative_to(self.root) or self.root.is_relative_to(self.control_root)
+            or any(self.control_root.is_relative_to(path) or path.is_relative_to(self.control_root)
+                   for path in self.protected)
+        ):
+            raise ValueError("Directorio de control solapado o inseguro")
         self.hooks = config["hooks"]
         self.checks = config["checks"]
         self.runtime_python = Path(config["runtime_python"])
@@ -187,6 +196,10 @@ class Deployment:
                        "RIFAS_DEPLOY_ENVIRONMENT": self.name,
                        "RIFAS_RELEASE_ROOT": str(active) if active else "",
                        "PYTHONDONTWRITEBYTECODE": "1"}
+        if self.control_root is not None:
+            process_env["RIFAS_CONTROL_ROOT"] = str(self.control_root)
+        else:
+            process_env.pop("RIFAS_CONTROL_ROOT", None)
         try:
             subprocess.run(command, cwd=(active or self.root) if label != "drain" else self.root, env=process_env, timeout=120, check=True)
         except (OSError, subprocess.SubprocessError) as error:

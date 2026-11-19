@@ -125,3 +125,77 @@ la plantilla.
    catálogo y plantilla coherentes y el portal y sorteo esperados
    operativos. La prueba de staging no autoriza una promoción a
    producción. La aplicación anterior queda fuera de ambos perfiles.
+
+## Fase 2C — Inspección pendiente en una operación desde PuTTY
+
+Esta inspección sirve para cerrar incógnitas sobre el staging existente.
+No instala componentes ni crea otro laboratorio. Usar la sesión PuTTY y
+la cuenta de inspección ya autorizadas, con el historial de la sesión
+deshabilitado si la política local exige evitar su persistencia. Copiar el
+contenido completo de [inspect-readonly.sh](inspect-readonly.sh), pegarlo como
+un solo bloque y ejecutar. Recoger la salida desde PuTTY sin redirigirla a un
+archivo en el servidor. No usar `sudo` por defecto. Una vista parcial se
+registra como parcial y no se sustituye con supuestos.
+
+El bloque entrega JSON por stdout. Python se ejecuta con `-I -B -c`: el
+código se transmite como argumento y no usa un heredoc que el shell pueda
+materializar en disco. Solo invoca consultas de systemd y `ss`, y lee
+metadatos, descriptores de `/proc` y archivos Nginx acotados. No ejecuta
+`nginx -T`, peticiones HTTP, SQL, copias ni acciones sobre servicios. El
+bloque no crea archivos; las políticas del servidor pueden registrar la
+sesión o actualizar metadatos de acceso al leer archivos. No usarlo si
+esas operaciones automáticas también están prohibidas.
+
+Interpretar el resultado así:
+
+- `service`, `listener` y `process` vinculan unidad, PID, cgroup y puerto
+  cuando son visibles. `proxy_route_hint` solo vincula rutas literales
+  reconocidas con un destino loopback visible en el mismo bloque plano.
+  Revisar includes, precedencia, sockets Unix y rutas alternativas antes
+  de tratar esa pista como publicación efectiva.
+- `component` y `database_file` muestran metadatos, presencia de
+  auxiliares y ámbito de resolución. Las entidades aparecen con
+  identificadores ordinales. `process.databases` registra aperturas
+  observadas mediante descriptores coincidentes. El inventario no abre
+  SQLite y no certifica esquemas, correspondencia con el catálogo ni
+  ausencia de accesos por alias.
+- `process.writable_fds`, `visibility` y `writers_and_backup` ayudan a
+  localizar escritores y planificadores. Una muestra no descarta
+  aperturas futuras, mapeos de memoria, cron/Plesk o escritores externos.
+  Los indicios de respaldo no acreditan la cobertura ni la restauración.
+- Solo se emiten campos permitidos. La salida no contiene líneas crudas
+  de configuración, variables de entorno, argumentos de procesos,
+  contenido SQLite, datos de cron, registros HTTP ni nombres de
+  entidades. Revisar `limits` y conservar la salida en el canal autorizado.
+
+### Qué garantiza el coordinador y qué debe garantizar Arsys
+
+`control_root` debe coincidir entre la configuración del coordinador y
+el perfil del hook. En los perfiles systemd es obligatorio y debe quedar
+fuera de ambas raíces restaurables. La barrera y el selector son hijos
+directos de ese directorio. Un perfil cruzado se rechaza antes de abrir
+el marcador o llamar a systemd. El marcador rechaza enlaces físicos y
+simbólicos. Se mantienen la validación del release y de los ámbitos de
+datos, la aprobación firmada independiente y la exclusión de `/sorteos`.
+
+El inventario facilitado indica que staging está anidado dentro de
+producción y ambos servicios comparten cuenta. El bloqueo del
+coordinador es por instalación: no detiene Gunicorn ni trabajos ajenos
+por sí mismo ni restringe a esa cuenta. Tampoco los filtros de rutas
+protegen frente a permisos compartidos, bind mounts, ACL o acceso a
+systemd fuera del hook.
+
+La condición de cierre es probar que **el operador, el coordinador,
+Gunicorn y los trabajos de staging** carecen de acceso de escritura a
+producción y a la aplicación anterior, y que solo pueden controlar su
+propia unidad. Se puede lograr en Arsys con cuentas y permisos separados
+o con confinamiento equivalente aplicado a todos esos contextos, sin
+exigir infraestructura nueva. Revisar las protecciones declaradas y
+su aplicación efectiva. Si se requieren cambios de permisos, unidades
+o proxy, deben autorizarse por separado.
+
+El ensayo real queda bloqueado hasta verificar también todos los
+escritores y entradas de publicación, el esquema y catálogo de las
+bases, el cierre de la barrera y la cobertura y recuperación del
+respaldo. Una inspección de lectura no sustituye un ensayo de parada o
+restauración autorizado.
