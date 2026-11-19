@@ -1,17 +1,22 @@
 """End-to-end tests against disposable Git, SSH and SQLite fixtures."""
 
 from contextlib import closing
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
 import tempfile
+from threading import Thread
+from urllib.error import HTTPError, URLError
+from urllib.request import ProxyHandler, Request, build_opener
 import unittest
 
-from deployment import schema
+from deployment import approval, schema
 from deployment.artifact import build
 from deployment.deploy import Deployment
 from platform_app.raffle_schema import SCHEMA_RAFFLES
@@ -44,13 +49,30 @@ class DeploymentTest(unittest.TestCase):
         shutil.copytree(PROJECT / "platform_app", cls.repository / "platform_app",
                         ignore=shutil.ignore_patterns("__pycache__"))
         shutil.copy2(PROJECT / "wsgi.py", cls.repository / "wsgi.py")
+        with (cls.repository / "wsgi.py").open("a") as wsgi:
+            wsgi.write("""
+import os
+import sqlite3
+from pathlib import Path
+old_wsgi = app.wsgi_app
+def synthetic_write(environ, start_response):
+    if environ['PATH_INFO'] == '/fixture-write' and environ['REQUEST_METHOD'] == 'POST':
+        with sqlite3.connect(Path(os.environ['RIFAS_DATA_ROOT']) / 'central/plataforma.sqlite') as db:
+            db.execute("INSERT INTO audit (actor, action) VALUES ('fixture', 'confirmed')")
+        start_response('201 Created', [('Content-Type', 'text/plain')])
+        return [b'confirmed']
+    return old_wsgi(environ, start_response)
+app.wsgi_app = synthetic_write
+""")
+
         recipe = cls.repository / RECIPE
         recipe.parent.mkdir(parents=True)
         shutil.copy2(PROJECT / RECIPE, recipe)
         cls.bootstrap_recipe = str(Path(RECIPE).with_name("bootstrap.json"))
         (cls.repository / cls.bootstrap_recipe).write_text(json.dumps({
             "package": "bootstrap", "version": "1.0.0", "platform_from": [None],
-            "platform_to": "2.3.1", "schema": "sorteos-v2", "migration": None, "checks": ["sorteos"],
+            "platform_to": "2.3.1", "schema": json.loads(recipe.read_text())["schema"],
+            "migration": None, "checks": ["sorteos"],
         }))
         cls.git("init", "-q")
         cls.git("add", ".")
@@ -60,6 +82,16 @@ class DeploymentTest(unittest.TestCase):
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(cls.key)], check=True)
         cls.signers = parent / "allowed_signers"
         cls.signers.write_text("rifas-release " + cls.key.with_suffix(".pub").read_text())
+        cls.operator_keys = {}
+        cls.operator_signers = {}
+        for environment in ("synthetic", "staging", "production"):
+            key = parent / f"operator-{environment}"
+            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True)
+            cls.operator_keys[environment] = key
+            signers = parent / f"allowed-{environment}"
+            signers.write_text("rifas-operator " + key.with_suffix(".pub").read_text())
+            cls.operator_signers[environment] = signers
+
 
     @classmethod
     def git(cls, *args):
@@ -99,10 +131,19 @@ class DeploymentTest(unittest.TestCase):
                 title, number_start, number_end, number_width, donation_cents, status, created_by, extended_info
             ) VALUES ('Sorteo',1,9,1,100,'published','fixture','Texto sintetico');
         """)
+        self.assets = self.root / "entidades/demo/uploads"
+        self.assets.mkdir()
+        (self.assets / "photo.jpg").write_bytes(b"synthetic media")
+        self.ops = self.root / "ops"
+        self.ops.mkdir()
+        (self.ops / "nginx.conf").write_text("proxy synthetic")
+        (self.ops / "supervisor.ini").write_text("supervisor synthetic")
+        (self.ops / "runtime.lock").write_text("runtime synthetic")
         noop = [sys.executable, "-B", "-c", "pass"]
         self.config = {
             "environment": "synthetic", "data_root": str(self.root), "baseline": str(self.baseline),
-            "allowed_signers": str(self.signers), "runtime_python": sys.executable,
+            "allowed_signers": str(self.signers), "approval_signers": str(self.operator_signers["synthetic"]),
+            "runtime_python": sys.executable, "backup_components": ["ops"],
             "hooks": {"drain": noop, "activate": noop, "resume": noop, "ready": self.command(READY)},
             "checks": {"sorteos": self.command(PACKAGE)},
         }
@@ -115,9 +156,9 @@ class DeploymentTest(unittest.TestCase):
         with closing(sqlite3.connect(path)) as connection:
             connection.executescript(sql)
 
-    def make_bundle(self, recipe, name):
+    def make_bundle(self, recipe, name, *, repository=None, commit=None):
         path = self.folder / name
-        fingerprint = build(self.repository, self.commit, recipe, path)
+        fingerprint = build(repository or self.repository, commit or self.commit, recipe, path)
         subprocess.run(["ssh-keygen", "-Y", "sign", "-f", str(self.key),
                         "-n", "rifas-deploy-v1", str(path / "manifest.json")],
                        check=True, capture_output=True)
@@ -126,8 +167,16 @@ class DeploymentTest(unittest.TestCase):
     def command(self, source):
         return [sys.executable, "-B", "-c", source]
 
-    def approval(self, action):
-        return f"{action}:synthetic:{self.fingerprint}"
+    def approval(self, action, *, environment="synthetic", fingerprint=None, run=None, signer=None):
+        if action == "recover" and run is None:
+            run = json.loads(self.deployment.pending.read_text())["run"]
+        data = approval.request(action, environment, self.root, fingerprint or self.fingerprint, run)
+        document = self.folder / f"approval-{data['nonce']}.json"
+        document.write_text(json.dumps(data))
+        subprocess.run(["ssh-keygen", "-Y", "sign", "-f", str(self.operator_keys[signer or environment]),
+                        "-n", approval.namespace(environment), str(document)],
+                       check=True, capture_output=True)
+        return document
 
     def version(self, relative=schema.TEMPLATE):
         with closing(sqlite3.connect(self.root / relative)) as connection:
@@ -146,8 +195,8 @@ class DeploymentTest(unittest.TestCase):
         self.assertEqual(plan["digest"], self.fingerprint)
         self.assertEqual(plan["commit"], self.commit)
         self.assertEqual(len(plan["databases"]), 4)
-        with self.assertRaisesRegex(ValueError, "aprobación"):
-            self.deployment.apply(self.bundle, f"apply:production:{self.fingerprint}")
+        with self.assertRaisesRegex(ValueError, "Aprobación"):
+            self.deployment.apply(self.bundle, self.approval("apply", environment="production"))
         with self.assertRaisesRegex(ValueError, "raíz"):
             Deployment({**self.config, "environment": "production"})
         self.assertEqual(original, self.snapshot())
@@ -179,7 +228,7 @@ with app.test_client() as client:
         bundle, fingerprint = self.make_bundle(self.bootstrap_recipe, "bootstrap")
         self.deployment.current.unlink()
         fresh = Deployment({**self.config, "baseline": None})
-        self.assertEqual(fresh.apply(bundle, f"apply:synthetic:{fingerprint}"), fingerprint)
+        self.assertEqual(fresh.apply(bundle, self.approval("apply", fingerprint=fingerprint)), fingerprint)
         self.assertTrue(fresh.current.is_symlink())
 
     def test_exclusive_lock(self):
@@ -197,7 +246,7 @@ with app.test_client() as client:
         self.assertFalse(self.deployment.pending.exists())
         self.assertIn('"phase": "rolled_back"', (self.deployment.state / "events.jsonl").read_text())
 
-    def test_hard_interrupt_recovery_after_first_database(self):
+    def interrupt(self, phase):
         settings = self.folder / "config.json"
         settings.write_text(json.dumps(self.config))
         code = """
@@ -208,14 +257,17 @@ deployment = Deployment(json.loads(Path(sys.argv[1]).read_text()))
 event = deployment.event
 def interrupt(phase, **details):
     event(phase, **details)
-    if phase == 'migrated':
+    if phase == sys.argv[4]:
         os.kill(os.getpid(), signal.SIGKILL)
 deployment.event = interrupt
-deployment.apply(Path(sys.argv[2]), sys.argv[3])
+deployment.apply(Path(sys.argv[2]), Path(sys.argv[3]))
 """
-        result = subprocess.run([*self.command(code), str(settings), str(self.bundle), self.approval("apply")],
+        result = subprocess.run([*self.command(code), str(settings), str(self.bundle), str(self.approval("apply")), phase],
                                 cwd=PROJECT)
         self.assertEqual(result.returncode, -9)
+
+    def test_hard_interrupt_recovery_after_first_database(self):
+        self.interrupt("migrated")
         self.assertEqual(self.version(), "2.4.0")
         self.assertEqual(self.version("entidades/other/data/rifas.sqlite3"), "2.2.0")
         self.deployment.recover(self.approval("recover"))
@@ -223,15 +275,276 @@ deployment.apply(Path(sys.argv[2]), sys.argv[3])
         self.assertEqual(self.deployment.active(), self.baseline)
         self.assertFalse(self.deployment.pending.exists())
 
+    def live_service(self):
+        controls = self.folder / "supervisor"
+        controls.mkdir()
+        gate = controls / "maintenance"
+        script = PROJECT / "tests/synthetic_supervisor.py"
+        stop = [sys.executable, "-B", str(script), str(controls), "stop"]
+        self.addCleanup(subprocess.run, stop, check=True)
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            backend = f"127.0.0.1:{listener.getsockname()[1]}"
+        opener = build_opener(ProxyHandler({}))
+
+        class Proxy(BaseHTTPRequestHandler):
+            def forward(self):
+                if gate.is_file():
+                    self.send_error(503)
+                    return
+                request = Request(f"http://{backend}{self.path}", method=self.command)
+                try:
+                    with opener.open(request, timeout=3) as response:
+                        body = response.read()
+                        self.send_response(response.status)
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                except HTTPError as error:
+                    self.send_error(error.code)
+                except URLError:
+                    self.send_error(502)
+
+            do_GET = do_POST = forward
+
+            def log_message(self, *_):
+                pass
+
+        proxy = ThreadingHTTPServer(("127.0.0.1", 0), Proxy)
+        worker = Thread(target=proxy.serve_forever, daemon=True)
+        worker.start()
+        self.addCleanup(proxy.server_close)
+        self.addCleanup(worker.join, 5)
+        self.addCleanup(proxy.shutdown)
+        public = f"http://127.0.0.1:{proxy.server_port}"
+        private = f"http://{backend}"
+        hook_config = self.ops / "hooks.json"
+        hook = [*self.command(f"import sys; sys.path.insert(0, {str(PROJECT)!r}); "
+                              "from deployment.hooks import main; main()"),
+                "--config", str(hook_config)]
+        hook_config.write_text(json.dumps({
+            "gate": str(gate), "target": str(controls / "target.json"),
+            "closed_url": public + "/health", "private_url": private + "/health",
+            "gunicorn": {"python": sys.executable,
+                         "arguments": ["--bind", backend, "--graceful-timeout", "2"],
+                         "environment": {"RIFAS_SESSION_COOKIE_NAME": "synthetic_session",
+                                         "RIFAS_SESSION_COOKIE_PATH": "/synthetic",
+                                         "RIFAS_PROXY_X_FOR": "0"}},
+            "start": [sys.executable, "-B", str(script), str(controls), "start", *hook, "serve"],
+            "stop": stop,
+        }))
+        check = [sys.executable, "-B", str(PROJECT / "deployment/smoke.py"),
+                 "--base", private, "--version", "2.3.1", "--slug", "demo"]
+        self.deployment.hooks.update({name: [*hook, name] for name in ("drain", "activate", "resume")})
+        self.deployment.hooks["ready"] = check
+        self.deployment.checks["sorteos"] = [*check, "--raffle-id", "1", "--marker", "Texto sintetico"]
+        process_env = {**os.environ, "RIFAS_RELEASE_ROOT": str(self.baseline), "RIFAS_DATA_ROOT": str(self.root),
+                       "PYTHONDONTWRITEBYTECODE": "1"}
+        gate.touch()
+        subprocess.run(self.deployment.hooks["activate"], env=process_env, check=True)
+        subprocess.run(self.deployment.hooks["resume"], env=process_env, check=True)
+        return controls, gate, public
+
+    def test_reactivate_after_drain_or_backup_failure(self):
+        controls, gate, public = self.live_service()
+        event = self.deployment.event
+
+        def inject(phase, **details):
+            event(phase, **details)
+            hit = (fail_phase == "backed_up" and phase == "backed_up" and "component" in details
+                   or fail_phase == "snapshot_complete" and phase == "backed_up" and "component" not in details)
+            if hit:
+                self.assertFalse((controls / "pid").exists(), "Gunicorn debía estar detenido")
+                self.assertTrue(gate.exists())
+                with self.assertRaises(HTTPError) as closed:
+                    build_opener(ProxyHandler({})).open(public + "/health", timeout=3)
+                self.assertEqual(closed.exception.code, 503)
+                closed.exception.close()
+                raise RuntimeError("fallo durante respaldo")
+
+        for fail_phase in ("drain", "backed_up", "snapshot_complete"):
+            with self.subTest(fail_phase=fail_phase):
+                pid = (controls / "pid").read_text()
+                if fail_phase == "drain":
+                    (controls / "fail-stop").touch()
+                    expected = subprocess.CalledProcessError
+                else:
+                    self.deployment.event = inject
+                    expected = RuntimeError
+                with self.assertRaises(expected):
+                    self.apply()
+                self.assertNotEqual((controls / "pid").read_text(), pid)
+                self.assertFalse(gate.exists())
+                self.assertFalse(self.deployment.pending.exists())
+                self.assertEqual(self.version(), "2.2.0")
+                with build_opener(ProxyHandler({})).open(public + "/health", timeout=3) as response:
+                    self.assertEqual(response.status, 200)
+        self.deployment.event = event
+
+    def test_hard_interrupt_while_service_stopped(self):
+        controls, gate, public = self.live_service()
+        for phase in ("hook_passed", "backed_up"):
+            with self.subTest(phase=phase):
+                self.interrupt(phase)
+                self.assertFalse((controls / "pid").exists())
+                self.assertTrue(gate.exists())
+                status = self.deployment.status()["pending"]
+                self.assertEqual(status["phase"], "draining")
+                self.deployment.recover(self.approval("recover", run=status["run"]))
+                self.assertEqual(self.version(), "2.2.0")
+                self.assertFalse(gate.exists())
+                with build_opener(ProxyHandler({})).open(public + "/health", timeout=3) as response:
+                    self.assertEqual(response.status, 200)
+
     def test_resume_failure_does_not_restore_committed_data(self):
-        self.deployment.hooks["resume"] = self.command("raise SystemExit(7)")
-        with self.assertRaises(subprocess.CalledProcessError):
+        _, gate, public = self.live_service()
+        resume = self.deployment.hooks["resume"]
+        self.deployment.hooks["resume"] = self.command(f"""
+import subprocess
+from urllib.request import Request, urlopen
+subprocess.run({resume!r}, check=True)
+with urlopen(Request({public + '/fixture-write'!r}, method='POST'), timeout=3) as response:
+    assert response.status == 201 and response.read() == b'confirmed'
+raise SystemExit(7)
+""")
+        with self.assertRaises(subprocess.CalledProcessError) as failure:
             self.apply()
+        self.assertEqual(failure.exception.returncode, 7)
+        self.assertFalse(gate.exists())
         self.assertEqual(json.loads(self.deployment.pending.read_text())["phase"], "committed")
-        self.deployment.hooks["resume"] = self.command("pass")
+        self.deployment.hooks["resume"] = resume
         self.deployment.recover(self.approval("recover"))
         self.assertEqual(self.version(), "2.4.0")
         self.assertTrue(self.deployment.current.is_symlink())
+        with closing(sqlite3.connect(self.root / schema.CENTRAL)) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT COUNT(*) FROM audit WHERE action='confirmed'"
+            ).fetchone()[0], 1)
+
+    def test_approvals_are_single_use_scoped_and_signed(self):
+        self.deployment.checks["sorteos"] = self.command("raise SystemExit(3)")
+        grant = self.approval("apply")
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.deployment.apply(self.bundle, grant)
+        with self.assertRaisesRegex(ValueError, "ya utilizada"):
+            self.deployment.apply(self.bundle, grant)
+        manipulated = self.approval("apply")
+        manipulated.write_bytes(manipulated.read_bytes() + b" ")
+        with self.assertRaisesRegex(ValueError, "fuera de alcance"):
+            self.deployment.apply(self.bundle, manipulated)
+        with self.assertRaisesRegex(ValueError, "fuera de alcance"):
+            self.deployment.apply(self.bundle, self.approval("apply", fingerprint="a" * 64))
+
+        for environment in ("staging", "production"):
+            (self.deployment.state / "environment").write_text(environment)
+            other = Deployment({**self.config, "environment": environment,
+                                "approval_signers": str(self.operator_signers[environment])})
+            wrong = "staging" if environment == "production" else "production"
+            for grant in (self.approval("apply", environment=wrong),
+                          self.approval("apply", environment=environment, signer=wrong)):
+                with self.assertRaisesRegex(ValueError, "fuera de alcance"):
+                    other.approve("apply", self.fingerprint, grant)
+            other.approve("apply", self.fingerprint, self.approval("apply", environment=environment))
+        overlap = self.folder / "overlap"
+        overlap.write_text("rifas-operator " + self.key.with_suffix(".pub").read_text())
+        (self.deployment.state / "environment").write_text("synthetic")
+        with self.assertRaisesRegex(ValueError, "independiente"):
+            Deployment({**self.config, "approval_signers": str(overlap)})
+        first_run = "a" * 32
+        scoped = self.approval("recover", run=first_run)
+        with self.assertRaisesRegex(ValueError, "fuera de alcance"):
+            self.deployment.approve("recover", self.fingerprint, scoped, "b" * 32)
+        with self.assertRaisesRegex(ValueError, "fuera de alcance"):
+            self.deployment.approve("apply", self.fingerprint, scoped)
+
+    def test_integral_restore_resumes_after_second_failure(self):
+        applied_event = self.deployment.event
+        original_code = (self.baseline / "wsgi.py").read_bytes()
+        self.ops.chmod(0o750)
+        (self.ops / "nginx.conf").chmod(0o640)
+        (self.assets / "photo.jpg").chmod(0o600)
+        failed_restores = []
+
+        def fail_midway(phase, **details):
+            applied_event(phase, **details)
+            if phase == "migrated":
+                (self.ops / "nginx.conf").unlink()
+                (self.ops / "supervisor.ini").write_text("changed")
+                (self.ops / "runtime.lock").write_text("changed")
+                (self.ops / "untracked").write_text("new")
+                (self.assets / "photo.jpg").write_bytes(b"changed")
+                (self.assets / "photo.jpg").chmod(0o644)
+                self.ops.chmod(0o755)
+                (self.baseline / "wsgi.py").write_bytes(b"changed")
+                (self.root / schema.TEMPLATE).unlink()
+                raise RuntimeError("migración interrumpida")
+            if phase == "restored" and not failed_restores:
+                failed_restores.append(details["component"])
+                raise RuntimeError("restauración interrumpida")
+
+        self.deployment.event = fail_midway
+        with self.assertRaisesRegex(RuntimeError, "restauración interrumpida"):
+            self.apply()
+        journal = json.loads(self.deployment.pending.read_text())
+        folder = self.deployment.state / "runs" / journal["run"] / "backup"
+        backup_file = folder / "data/ops/runtime.lock"
+        original = backup_file.read_bytes()
+        backup_file.write_text("corrupted")
+        attempted = self.approval("recover")
+        with self.assertRaisesRegex(ValueError, "alterado"):
+            self.deployment.recover(attempted)
+        with self.assertRaisesRegex(ValueError, "ya utilizada"):
+            self.deployment.recover(attempted)
+        backup_file.write_bytes(original)
+        self.deployment.event = applied_event
+        self.deployment.recover(self.approval("recover"))
+        self.assertEqual(self.version(), "2.2.0")
+        self.assertEqual((self.assets / "photo.jpg").read_bytes(), b"synthetic media")
+        self.assertEqual((self.assets / "photo.jpg").stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.ops.stat().st_mode & 0o777, 0o750)
+        self.assertEqual((self.ops / "nginx.conf").stat().st_mode & 0o777, 0o640)
+        self.assertEqual((self.ops / "supervisor.ini").read_text(), "supervisor synthetic")
+        self.assertEqual((self.ops / "runtime.lock").read_text(), "runtime synthetic")
+        self.assertEqual((self.baseline / "wsgi.py").read_bytes(), original_code)
+        self.assertFalse((self.ops / "untracked").exists())
+
+    def test_second_package_uses_different_contract_and_migration_without_coordinator_changes(self):
+        clone = self.folder / "second-git"
+        subprocess.run(["git", "clone", "-q", str(self.repository), str(clone)], check=True)
+        relative = "platform_app/fixture_migration.py"
+        (clone / relative).write_text("""
+DDL = "CREATE TABLE second_fixture (id INTEGER PRIMARY KEY, value TEXT)"
+def upgrade(connection, version):
+    with connection:
+        connection.execute(DDL)
+        connection.execute("UPDATE module_versions SET version=? WHERE module='second'", (version,))
+""")
+        recipe = str(Path(RECIPE).with_name("second.json"))
+        (clone / recipe).write_text(json.dumps({
+            "package": "second", "version": "5.0.0", "platform_from": ["2.3.1"],
+            "platform_to": "2.3.1",
+            "schema": {"module": "second", "from": ["4.0.0"], "to": "5.0.0",
+                       "tables": {"second_fixture": {"file": relative, "symbol": "DDL"}}},
+            "migration": {"file": relative, "function": "upgrade", "arguments": {"version": "5.0.0"}},
+            "checks": ["second"],
+        }))
+        subprocess.run(["git", "-C", str(clone), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(clone), "-c", "user.name=Test",
+                        "-c", "user.email=test@example.invalid", "commit", "-qm", "Second package"], check=True)
+        commit = subprocess.check_output(["git", "-C", str(clone), "rev-parse", "HEAD"], text=True).strip()
+        bases = schema.inventory(self.root, dry=True)[1:]
+        for value in bases:
+            with closing(sqlite3.connect(self.root / value)) as connection, connection:
+                connection.execute("INSERT INTO module_versions VALUES ('second','4.0.0',NULL)")
+        bundle, fingerprint = self.make_bundle(recipe, "second", repository=clone, commit=commit)
+        self.deployment.checks["second"] = self.command(READY)
+        self.deployment.apply(bundle, self.approval("apply", fingerprint=fingerprint))
+        for value in bases:
+            with closing(sqlite3.connect(self.root / value)) as connection:
+                self.assertEqual(connection.execute(
+                    "SELECT version FROM module_versions WHERE module='second'"
+                ).fetchone()[0], "5.0.0")
+                self.assertEqual(connection.execute("SELECT COUNT(*) FROM second_fixture").fetchone()[0], 0)
 
     def test_rejects_tampered_payload_and_manifest(self):
         (self.bundle / "payload/wsgi.py").write_text("# tampered")

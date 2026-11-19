@@ -1,7 +1,7 @@
 """Coordinador de releases Rifas. Ejecutar con python -m deployment.deploy."""
 
 import argparse
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import fcntl
 import json
@@ -11,51 +11,29 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from uuid import uuid4
 
-from deployment import schema
-from deployment.artifact import IDENTITY, MANIFEST, NAMESPACE, SIGNATURE, digest, payload_path, platform_version
-from deployment.backup_sqlite import backup_database, sha256, verify_sqlite, write_inventory
+from deployment import approval, backup_integral as snapshot, schema
+from deployment.artifact import IDENTITY, MANIFEST, NAMESPACE, SIGNATURE, digest, payload_path, platform_version, verify_signature
+from deployment.backup_sqlite import sha256
+from deployment.backup_integral import atomic_json, sync
 
 HOOKS = {"drain", "activate", "ready", "resume"}
 
 
-def sync(path):
-    fd = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-
-
-def atomic_json(path, value):
-    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as handle:
-        temporary = Path(handle.name)
-        json.dump(value, handle, sort_keys=True)
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, path)
-    sync(path.parent)
+def signing_keys(path):
+    keys = set(re.findall(r"(?m)^[^#\n][^\n]*?\bssh-ed25519\s+([A-Za-z0-9+/=]+)(?=\s|$)",
+                          path.read_text()))
+    if not keys:
+        raise ValueError(f"No hay claves Ed25519 en {path.name}")
+    return keys
 
 
 def validate_artifact(bundle, trusted_signers):
-    manifest_path = bundle / MANIFEST
-    signature = bundle / SIGNATURE
-    if any(not path.is_file() or path.is_symlink() for path in (manifest_path, signature)):
-        raise ValueError("Faltan manifiesto o firma regulares")
-    if manifest_path.stat().st_size > 256_000 or signature.stat().st_size > 20_000:
-        raise ValueError("Manifiesto o firma demasiado grandes")
-    raw = manifest_path.read_bytes()
-    subprocess.run(
-        ["ssh-keygen", "-Y", "verify", "-f", str(trusted_signers), "-I", IDENTITY,
-         "-n", NAMESPACE, "-s", str(signature)], input=raw, check=True,
-        stdout=subprocess.DEVNULL, timeout=20,
-    )
+    raw = verify_signature(bundle / MANIFEST, bundle / SIGNATURE, trusted_signers, IDENTITY, NAMESPACE)
     manifest = json.loads(raw)
     if set(manifest) != {"format", "package", "version", "commit", "recipe", "files",
-                         "platform_from", "platform_to", "schema", "migration", "checks"} or manifest["format"] != 1:
+                         "platform_from", "platform_to", "schema", "migration", "checks"} or manifest["format"] != 2:
         raise ValueError("Formato de manifiesto incompatible")
     version = r"[0-9]+\.[0-9]+\.[0-9]+"
     if (not re.fullmatch(r"[a-f0-9]{40}", manifest["commit"])
@@ -66,21 +44,15 @@ def validate_artifact(bundle, trusted_signers):
             or not isinstance(manifest["platform_from"], list) or not manifest["platform_from"]
             or any(item is not None and not re.fullmatch(version, item) for item in manifest["platform_from"])
             or not isinstance(manifest["checks"], list) or not manifest["checks"]
-            or len(set(manifest["checks"])) != len(manifest["checks"])
-            or manifest["schema"] not in schema.CONTRACTS
-            or manifest["migration"] not in schema.MIGRATIONS):
+            or len(set(manifest["checks"])) != len(manifest["checks"])):
         raise ValueError("Metadatos de paquete incompatibles")
-    if manifest["migration"] == "sorteos-2.4.0" and (
-        manifest["package"], manifest["version"], manifest["checks"]
-    ) != ("sorteos", "2.4.0", ["sorteos"]):
-        raise ValueError("Contrato de Sorteos 2.4.0 incompatible")
     payload = bundle / "payload"
     if payload.is_symlink() or not payload.is_dir():
         raise ValueError("Payload inválido")
     files = manifest["files"]
-    required = {"wsgi.py", "platform_app/__init__.py", "platform_app/raffle_schema.py"}
-    if manifest["migration"]:
-        required.add("platform_app/raffle_migration.py")
+    required = {"wsgi.py", "platform_app/__init__.py"} | schema.referenced_files(
+        manifest["schema"], manifest["migration"]
+    )
     if not isinstance(files, dict) or not required <= files.keys():
         raise ValueError("Faltan archivos obligatorios")
     observed = set()
@@ -111,9 +83,15 @@ class Deployment:
         self.root = Path(config["data_root"]).resolve(strict=True)
         self.state = self.root / ".rifas-deploy"
         self.signers = Path(config["allowed_signers"]).resolve(strict=True)
+        self.approvers = Path(config["approval_signers"]).resolve(strict=True)
+        self.backup_components = config["backup_components"]
+        if not isinstance(self.backup_components, list):
+            raise ValueError("backup_components debe ser una lista de rutas gestionadas")
         if (self.root.is_relative_to("/root") or self.root == Path("/") or not self.root.is_dir()
-                or not self.signers.is_file() or self.state.is_symlink()):
+                or not self.signers.is_file() or not self.approvers.is_file() or self.state.is_symlink()):
             raise ValueError("Rutas de instalación no admitidas")
+        if signing_keys(self.approvers) & signing_keys(self.signers):
+            raise ValueError("La confianza de aprobación debe ser independiente de la firma de releases")
         self.hooks = config["hooks"]
         self.checks = config["checks"]
         self.runtime_python = Path(config["runtime_python"])
@@ -136,10 +114,11 @@ class Deployment:
             raise ValueError("La raíz no está registrada para el entorno de la configuración")
         self.pending = self.state / "pending.json"
         self.current = self.state / "current"
+        self.run = None
 
     def event(self, phase, **details):
         record = {"at": datetime.now(timezone.utc).isoformat(), "environment": self.name,
-                  "phase": phase, **details}
+                  "phase": phase, "run": self.run, **details}
         with (self.state / "events.jsonl").open("a") as log:
             log.write(json.dumps(record, sort_keys=True) + "\n")
             log.flush()
@@ -184,7 +163,7 @@ class Deployment:
                        "RIFAS_RELEASE_ROOT": str(active) if active else "",
                        "PYTHONDONTWRITEBYTECODE": "1"}
         try:
-            subprocess.run(command, cwd=active or self.root, env=process_env, timeout=120, check=True)
+            subprocess.run(command, cwd=(active or self.root) if label != "drain" else self.root, env=process_env, timeout=120, check=True)
         except (OSError, subprocess.SubprocessError) as error:
             self.event("hook_failed", hook=label, error=type(error).__name__,
                        returncode=getattr(error, "returncode", None))
@@ -204,7 +183,7 @@ class Deployment:
              "import flask, werkzeug, PIL.Image, reportlab, cryptography.fernet, gunicorn"],
             timeout=30, check=True,
         )
-        expected = schema.expected_raffles(bundle / "payload")
+        expected = schema.expected_schema(bundle / "payload", manifest["schema"])
         databases = schema.validate(
             self.root, manifest["schema"], expected=expected,
             target=manifest["migration"] is None, dry=dry,
@@ -215,7 +194,11 @@ class Deployment:
             for file in (self.root / relative, self.root / (str(relative) + "-wal"))
             if file.is_file()
         )
-        if shutil.disk_usage(self.state if self.state.is_dir() else self.root).free < payload_size + 2 * database_size:
+        managed = snapshot.inventory(self.root, active, self.backup_components, databases)
+        managed_size = sum(item["size"] for item in managed
+                           if item["kind"] != "directory" and
+                           (item["group"] != "data" or Path(item["path"]) not in databases))
+        if shutil.disk_usage(self.state if self.state.is_dir() else self.root).free < payload_size + managed_size + 2 * database_size:
             raise ValueError("Espacio insuficiente para release y respaldo SQLite")
         return manifest, fingerprint, databases, active, expected
 
@@ -225,52 +208,40 @@ class Deployment:
         manifest, fingerprint, databases, _, _ = self.preflight(bundle, dry=True)
         return {"environment": self.name, "mode": "read-only", "digest": fingerprint,
                 "package": manifest["package"], "commit": manifest["commit"],
-                "databases": [str(path) for path in databases], "checks": manifest["checks"]}
+                "databases": [str(path) for path in databases], "checks": manifest["checks"],
+                "backup_components": ["central", "entidades", *self.backup_components],
+                "installation": str(self.root)}
 
-    def approve(self, operation, fingerprint, approval):
-        if approval != f"{operation}:{self.name}:{fingerprint}":
-            raise ValueError("Se requiere aprobación explícita para operación, entorno y digest")
+    def status(self):
+        if not self.pending.exists():
+            return {"environment": self.name, "installation": str(self.root), "pending": None}
+        journal = json.loads(self.pending.read_text())
+        return {"environment": self.name, "installation": str(self.root), "pending": {
+            key: journal[key] for key in ("run", "digest", "phase")
+        }}
+
+    def approve(self, operation, fingerprint, document, run=None):
+        return approval.verified(
+            document, self.approvers, operation, self.name, self.root, fingerprint, run
+        )
+
+    def consume(self, grant):
+        receipts = self.state / "used-approvals"
+        receipts.mkdir(mode=0o700, exist_ok=True)
+        try:
+            with (receipts / grant["nonce"]).open("x") as receipt:
+                json.dump(grant, receipt, sort_keys=True)
+                receipt.flush()
+                os.fsync(receipt.fileno())
+        except FileExistsError:
+            raise ValueError("Aprobación ya utilizada") from None
+        sync(receipts)
+        sync(self.state)
 
     def checkpoint(self, journal, phase):
         journal["phase"] = phase
         atomic_json(self.pending, journal)
         self.event(phase, run=journal["run"], digest=journal["digest"])
-
-    def backup(self, paths, folder):
-        folder.mkdir(mode=0o700)
-        records = []
-        for relative in paths:
-            destination = folder / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            records.append(backup_database(self.root / relative, destination))
-            sync(destination)
-            self.event("backed_up", database=str(relative))
-        inventory = folder / "inventory.json"
-        write_inventory(records, inventory)
-        for directory, _, _ in os.walk(folder, topdown=False):
-            sync(Path(directory))
-        sync(folder.parent)
-
-    def restore(self, journal, folder):
-        inventory = json.loads((folder / "inventory.json").read_text())
-        expected = {str(self.root / relative): folder / relative for relative in journal["databases"]}
-        records = inventory["databases"]
-        if len(records) != len(expected) or {record["source"] for record in records} != expected.keys():
-            raise ValueError("Inventario de restauración incompleto")
-        for record in records:
-            source = expected[record["source"]]
-            if sha256(source) != record["sha256"]:
-                raise ValueError("Huella de respaldo incorrecta")
-            verify_sqlite(source)
-        for record in records:
-            destination = Path(record["source"])
-            relative = destination.relative_to(self.root)
-            schema.safe_database(self.root, relative, False)
-            with closing(schema.connect(expected[str(destination)], "mode=ro")) as source:
-                with closing(schema.connect(destination, "mode=rw")) as target:
-                    source.backup(target)
-                    schema.inspect(target)
-            self.event("restored", database=str(relative))
 
     def finish(self, journal):
         active = self.active()
@@ -291,13 +262,15 @@ class Deployment:
         if phase not in {"draining", "backed_up", "changing"}:
             raise ValueError("Fase de recuperación desconocida")
         previous = Path(journal["previous"]) if journal["previous"] else None
-        self.hook("drain", self.hooks["drain"], self.active())
+        self.hook("drain", self.hooks["drain"], previous)
         if phase == "changing":
-            self.restore(journal, self.state / "runs" / journal["run"] / "backup")
+            snapshot.restore(
+                self.root, previous, journal["components"], [Path(path) for path in journal["databases"]],
+                self.state / "runs" / journal["run"] / "backup", journal["snapshot"], self.event,
+            )
             schema.validate(self.root, journal["schema"])
         self.point_to(previous)
-        if phase == "changing":
-            self.hook("activate", self.hooks["activate"], previous)
+        self.hook("activate", self.hooks["activate"], previous)
         if previous:
             self.hook("ready", self.hooks["ready"], previous)
         self.checkpoint(journal, "rolled_back")
@@ -306,7 +279,9 @@ class Deployment:
     def recover(self, approval):
         with self.lock():
             journal = json.loads(self.pending.read_text())
-            self.approve("recover", journal["digest"], approval)
+            grant = self.approve("recover", journal["digest"], approval, journal["run"])
+            self.consume(grant)
+            self.run = journal["run"]
             self.event("recovery_started", run=journal["run"], digest=journal["digest"])
             try:
                 self.recover_pending(journal)
@@ -334,11 +309,12 @@ class Deployment:
     def apply(self, bundle, approval):
         # Verificar el paquete antes de crear estado y volver a verificar la copia privada.
         original, fingerprint = validate_artifact(bundle, self.signers)
-        self.approve("apply", fingerprint, approval)
+        grant = self.approve("apply", fingerprint, approval)
         with self.lock():
             if self.pending.exists():
                 raise ValueError("Recuperar la ejecución pendiente antes de aplicar")
-            run = uuid4().hex
+            self.consume(grant)
+            self.run = run = grant["run"]
             folder = self.state / "runs" / run
             folder.mkdir(parents=True, mode=0o700)
             self.event("approved", run=run, digest=fingerprint, commit=original["commit"])
@@ -351,7 +327,8 @@ class Deployment:
                 raise
             self.event("preflight_passed", run=run, databases=len(paths))
             journal = {"run": run, "digest": fingerprint, "previous": str(previous) if previous else None,
-                       "schema": manifest["schema"], "databases": [str(path) for path in paths]}
+                       "schema": manifest["schema"], "components": self.backup_components,
+                       "databases": [str(path) for path in paths]}
             self.checkpoint(journal, "draining")
             try:
                 self.hook("drain", self.hooks["drain"], previous)
@@ -360,10 +337,13 @@ class Deployment:
                     target=manifest["migration"] is None,
                 ) != paths:
                     raise ValueError("El inventario cambió durante el drenaje")
-                self.backup(paths, folder / "backup")
+                journal["snapshot"] = snapshot.capture(
+                    self.root, previous, self.backup_components, paths, folder / "backup", self.event
+                )
+                snapshot.verify(folder / "backup", journal["snapshot"])
                 self.checkpoint(journal, "backed_up")
                 self.checkpoint(journal, "changing")
-                schema.migrate(self.root, paths, manifest["migration"], payload, self.event)
+                schema.migrate(self.root, paths, manifest["schema"], manifest["migration"], payload, self.event)
                 if schema.validate(self.root, manifest["schema"], expected=expected, target=True) != paths:
                     raise ValueError("El inventario cambió durante la migración")
                 self.point_to(payload)
@@ -372,8 +352,10 @@ class Deployment:
                 for check in manifest["checks"]:
                     self.hook(f"package:{check}", self.checks[check], payload)
             except Exception as error:
-                self.event("failed", run=run, error=type(error).__name__)
-                self.recover_pending(json.loads(self.pending.read_text()))
+                try:
+                    self.event("failed", run=run, error=type(error).__name__)
+                finally:
+                    self.recover_pending(json.loads(self.pending.read_text()))
                 raise
             self.checkpoint(journal, "committed")
             self.finish(journal)
@@ -388,13 +370,16 @@ def main():
         command = commands.add_parser(action)
         command.add_argument("--artifact", type=Path, required=True)
         if action == "apply":
-            command.add_argument("--approve", required=True)
-    commands.add_parser("recover").add_argument("--approve", required=True)
+            command.add_argument("--approve", type=Path, required=True)
+    commands.add_parser("recover").add_argument("--approve", type=Path, required=True)
+    commands.add_parser("status")
     args = parser.parse_args()
     try:
         deployment = Deployment(json.loads(args.config.read_text()))
         if args.command == "plan":
             print(json.dumps(deployment.plan(args.artifact.resolve()), sort_keys=True))
+        elif args.command == "status":
+            print(json.dumps(deployment.status(), sort_keys=True))
         elif args.command == "apply":
             print(deployment.apply(args.artifact.resolve(), args.approve))
         else:

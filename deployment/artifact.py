@@ -22,6 +22,20 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def verify_signature(document, signature, signers, identity, namespace):
+    if any(not path.is_file() or path.is_symlink() for path in (document, signature)):
+        raise ValueError("Faltan documento o firma regulares")
+    if document.stat().st_size > 256_000 or signature.stat().st_size > 20_000:
+        raise ValueError("Documento o firma demasiado grandes")
+    raw = document.read_bytes()
+    subprocess.run(
+        ["ssh-keygen", "-Y", "verify", "-f", str(signers), "-I", identity,
+         "-n", namespace, "-s", str(signature)], input=raw, check=True,
+        stdout=subprocess.DEVNULL, timeout=20,
+    )
+    return raw
+
+
 def payload_path(name):
     path = PurePosixPath(name)
     if str(path) != name or any(part in (".", "..") for part in path.parts):
@@ -68,7 +82,7 @@ def build(repository, commit, recipe_path, output):
         raise ValueError("Código incompatible con la receta")
     manifest = {
         **recipe,
-        "format": 1,
+        "format": 2,
         "commit": commit,
         "recipe": str(recipe_path),
         "files": {name: digest(data) for name, data in files.items()},

@@ -3,7 +3,16 @@
   "version": "2.4.0",
   "platform_from": ["2.3.1"],
   "platform_to": "2.3.1",
-  "schema": "sorteos-v2",
-  "migration": "sorteos-2.4.0",
+  "schema": {
+    "module": "sorteos",
+    "from": ["2.2.0"],
+    "to": "2.4.0",
+    "tables": {"raffles": {"file": "platform_app/raffle_schema.py", "symbol": "SCHEMA_RAFFLES"}}
+  },
+  "migration": {
+    "file": "platform_app/raffle_migration.py",
+    "function": "migrate_raffles",
+    "arguments": {"update_version": true}
+  },
   "checks": ["sorteos"]
 }
