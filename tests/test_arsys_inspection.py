@@ -134,3 +134,45 @@ class ArsysInspectionTest(unittest.TestCase):
         self.assertTrue(any(row.get("effective_verified") is False for row in rows))
         for value in ("hidden", "private.example.invalid", "privatealias", "private_target"):
             self.assertNotIn(value, output.getvalue())
+
+    def test_final_inspector_does_not_expand_globs_outside_configuration_roots(self):
+        script = Path(__file__).resolve().parents[1] / "deployment/arsys/inspect-route-acl-readonly.sh"
+        namespace = {"__name__": "fixture"}
+        exec(compile(shlex.split(script.read_text())[-1], str(script), "exec"), namespace)
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp, contextlib.redirect_stdout(output):
+            root = Path(temp)
+            nginx, outside = root / "nginx", root / "outside"
+            nginx.mkdir()
+            outside.mkdir()
+            (outside / "protected.conf").write_text("location /fixture { proxy_pass http://localhost:8768; }")
+            (nginx / "nginx.conf").write_text(f"http {{ include {nginx}/../outside/*.conf; }}")
+            namespace["NGINX"], namespace["BASE"] = nginx, root / "vhost"
+            from unittest.mock import patch
+            with (patch("glob.glob", side_effect=AssertionError("unsafe glob expanded")),
+                  patch("glob.iglob", side_effect=AssertionError("unsafe glob expanded"))):
+                namespace["proxy_final"]()
+        self.assertIn("external_include", namespace["PENDING"])
+        self.assertNotIn("protected.conf", output.getvalue())
+
+    def test_final_inspector_reports_stop_propagation_even_if_unit_was_seen_earlier(self):
+        script = Path(__file__).resolve().parents[1] / "deployment/arsys/inspect-route-acl-readonly.sh"
+        namespace = {"__name__": "fixture"}
+        exec(compile(shlex.split(script.read_text())[-1], str(script), "exec"), namespace)
+        units = {
+            "rifas-pruebas.service": {
+                "Id": "rifas-pruebas.service", "LoadState": "loaded", "Requires": "rifas-platform.service",
+                "Wants": "auxiliary.service",
+            },
+            "rifas-platform.service": {"Id": "rifas-platform.service", "LoadState": "loaded"},
+            "auxiliary.service": {
+                "Id": "auxiliary.service", "LoadState": "loaded", "PropagatesStopTo": "rifas-platform.service",
+            },
+        }
+        namespace["show_unit"] = lambda name, fields: units[name]
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            namespace["dependencies_final"]()
+        hits = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertTrue(any(row.get("edge") == "PropagatesStopTo" and row.get("depth") == 2
+                            and row.get("scopes") == ["production"] for row in hits))

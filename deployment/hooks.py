@@ -191,17 +191,19 @@ class Hooks:
         if not os.environ.get("RIFAS_RELEASE_ROOT"):
             return
         self.wait(self.settings["private_url"], 200)
-        self.run("resume_jobs")
-        self.gate.unlink(missing_ok=True)
-        sync(self.gate.parent)
         try:
+            self.run("resume_jobs")
+            self.gate.unlink(missing_ok=True)
+            sync(self.gate.parent)
             for url in self.public_urls:
                 self.wait(url, self.public_open_status)
         except Exception:
             if self.public_open_status == 401:
                 try:
-                    self.close_gate()
-                    self.run("pause_jobs")
+                    try:
+                        self.close_gate()
+                    finally:
+                        self.run("pause_jobs")
                 except Exception as closure:
                     raise RuntimeError(
                         "Falló la reapertura y no se completó el nuevo cierre"

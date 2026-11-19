@@ -89,5 +89,32 @@
     "identity_groups_permissions_acl_mounts",
     "paths",
     "profile_and_policy_files"
-  ]
+  ],
+  "phase_2e_closure": {
+    "resolved_evidence": [
+      "unit_port_and_database_separation_as_reported",
+      "getfacl_executable_missing",
+      "posix_acl_attributes_absent_in_sampled_directories",
+      "literal_nginx_location_and_basic_reference"
+    ],
+    "final_read_only_pending": [
+      "loaded_vhost_and_ordered_includes",
+      "competing_aliases_and_direct_routes_to_8768",
+      "maintenance_scope_and_precedence",
+      "writers_cron_plesk_and_transitive_unit_dependencies",
+      "permissions_groups_mounts_and_delegation_evidence"
+    ],
+    "requires_authorized_test": [
+      "effective_dedicated_staging_permissions_and_service_delegation",
+      "writer_drain_without_effects_on_production_or_legacy",
+      "barrier_on_all_reviewed_routes_and_basic_after_reopen",
+      "external_recovery"
+    ],
+    "release_intervention_ready": false,
+    "requires_before_batch_signature": [
+      "reviewed_effective_route_and_writer_maps",
+      "exact_changes_backups_and_inverses",
+      "separate_authorizations_and_pinned_digest"
+    ]
+  }
 }

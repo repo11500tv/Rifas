@@ -277,7 +277,18 @@ siendo necesarios. El [lote de ejemplo](intervention.example.json) conserva
 marcadores hasta completar esos datos y los comandos efectivos,
 incluida la reversión. No se ha autorizado ni ejecutado ningún cambio.
 
-## Inspector final de cierre operativo
+## Cierre definitivo de 2E
+
+### A. Comprobaciones ya resueltas
+
+El [inventario estructural](inventory.json) conserva las dos lecturas
+comunicadas desde Arsys. La unidad y el puerto de cada entorno, la
+separación de las bases, la referencia literal hacia 8768, `auth_basic`
+en el fragmento y el diagnóstico `getfacl: executable_missing` se
+reutilizan. La ausencia de ACL en la muestra no acredita permisos de
+una identidad futura. Esta revisión no vuelve a ejecutar esas consultas.
+
+### B. Datos pendientes de la última inspección
 
 Para esta revisión, ejecutar **solo** el contenido completo de
 [inspect-route-acl-readonly.sh](inspect-route-acl-readonly.sh) en la sesión
@@ -295,7 +306,17 @@ o actualizar metadatos de acceso según su configuración.
 | `writer_hint`, `cron_hint`, `dependency_hit` | Identifica descriptores de escritura y mapeos compartidos observables, coincidencias de cron del sistema y del usuario activo, y el grafo systemd de staging con límites de profundidad y volumen. Omite nombres de cuenta, comandos y contenido de trabajos. Una muestra parcial o vacía no descarta escritores inactivos. Confirmar tareas Plesk con su vista de solo lectura autorizada y revisar trabajos indirectos y fuera de systemd. |
 | `permission_hint`, `mount_hint`, `delegation_hint` | Muestra permisos respecto del lector, relación de las identidades actuales, montajes relevantes e indicios estáticos de sudo/polkit. No acredita los permisos de una identidad aún no provisionada, los montajes de su namespace ni la autorización efectiva de una delegación. |
 
-### Criterios objetivos para cerrar el lote
+### C. Comprobaciones que requieren un ensayo autorizado
+
+Comprobar en ejecución el aislamiento del operador, el servicio y los
+trabajos de staging; la efectividad de una delegación limitada a
+`rifas-pruebas.service`; el drenaje de escritores; y la barrera en
+cada entrada del mapa, incluida la autenticación después de reabrir.
+Un `401 Basic` o `503` por sí solo no descarta rutas alternativas.
+La recuperación externa sigue pendiente. Las autorizaciones para
+inspección, cambios, ensayo de recuperación y despliegue son separadas.
+
+### D. Condiciones necesarias para considerar ejecutable el lote
 
 1. Disponer de un mapa revisado del virtual host cargado y su cadena de
    includes, con cada hostname, puerto, prefijo, redirección, ruta directa
@@ -328,3 +349,10 @@ puede quedar como `closed_verified` sin que ello signifique que la
 reapertura o recuperación terminó. No ejecutar un release mientras este
 estado siga pendiente. Revisar la barrera y usar el mismo lote con la
 autorización independiente de recuperación.
+
+En la reapertura del release, un error al retirar o sincronizar el
+marcador también activa el segundo cierre de staging. Se intenta pausar
+los trabajos aunque ese cierre falle. El error se propaga al coordinador,
+que conserva la recuperación pendiente. Las pruebas sintéticas verifican
+la persistencia de la intervención incluso tras un reintento autorizado
+fallido y comprueban archivos vecinos de producción y `/sorteos`.

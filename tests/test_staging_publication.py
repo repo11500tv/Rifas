@@ -111,3 +111,37 @@ class StagingPublicationTest(TestCase):
             with self.assertRaisesRegex(RuntimeError, "no se completó el nuevo cierre"):
                 hook.resume()
         hook.close_gate.assert_called_once()
+
+    def test_release_recloses_after_sync_fails_with_gate_already_removed(self):
+        hook = Hooks.__new__(Hooks)
+        hook.settings = {"private_url": "http://127.0.0.1:8768/health"}
+        hook.public_urls = self.transaction.publication
+        hook.public_open_status = 401
+        hook.gate = Mock()
+        hook.check_invocation = Mock()
+        hook.run = Mock()
+        hook.wait = Mock()
+        hook.close_gate = Mock()
+        with (patch.dict("os.environ", {"RIFAS_RELEASE_ROOT": "/fixture"}),
+              patch("deployment.hooks.sync", side_effect=OSError("directory sync failed"))):
+            with self.assertRaisesRegex(OSError, "directory sync failed"):
+                hook.resume()
+        hook.gate.unlink.assert_called_once_with(missing_ok=True)
+        hook.close_gate.assert_called_once()
+        hook.run.assert_any_call("pause_jobs")
+
+    def test_release_pauses_writers_even_if_second_close_fails(self):
+        hook = Hooks.__new__(Hooks)
+        hook.settings = {"private_url": "http://127.0.0.1:8768/health"}
+        hook.public_urls = self.transaction.publication
+        hook.public_open_status = 401
+        hook.gate = Mock()
+        hook.check_invocation = Mock()
+        hook.run = Mock()
+        hook.wait = Mock(side_effect=[None, RuntimeError("lost Basic")])
+        hook.close_gate = Mock(side_effect=RuntimeError("no 503"))
+        with (patch.dict("os.environ", {"RIFAS_RELEASE_ROOT": "/fixture"}),
+              patch("deployment.hooks.sync")):
+            with self.assertRaisesRegex(RuntimeError, "no se completó el nuevo cierre"):
+                hook.resume()
+        hook.run.assert_any_call("pause_jobs")

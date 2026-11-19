@@ -1,5 +1,6 @@
 /usr/bin/python3 -I -B -c 'import errno
 import glob
+from itertools import islice
 import json
 import os
 from pathlib import Path
@@ -295,10 +296,24 @@ class IncludeReview:
                 continue
             # No expandir patrones de otros vhosts o fuera del alcance.
             search = Path(pattern)
-            if not search.is_relative_to(NGINX) and not search.is_relative_to(BASE):
+            if ".." in search.parts or not (search.is_relative_to(NGINX) or search.is_relative_to(BASE)):
                 PENDING.add("external_include")
                 continue
-            matches = sorted(glob.glob(pattern))
+            if glob.has_magic(str(search.parent)):
+                PENDING.add("wildcard_include_directory_requires_review")
+                continue
+            try:
+                parent = search.parent.resolve(strict=True)
+            except (OSError, RuntimeError):
+                PENDING.add("include_directory_unreadable")
+                continue
+            if not parent.is_relative_to(NGINX) and not parent.is_relative_to(BASE):
+                PENDING.add("external_include")
+                continue
+            matches = sorted(islice(glob.iglob(str(parent / search.name)), 65))
+            if len(matches) > 64:
+                PENDING.add("include_limit")
+                continue
             if not matches and not glob.has_magic(pattern):
                 PENDING.add("literal_include_missing")
             for count, match in enumerate(matches, start=1):
@@ -480,17 +495,22 @@ def dependencies_final():
     initial = data.get("staging", {})
     visited = {SERVICE_NAMES["staging"]}
     queue = [(name, edge, 1) for edge in EDGE_FIELDS for name in initial.get(edge, "").split()]
-    while queue:
+    reported = set()
+    for _ in range(512):
+        if not queue:
+            break
         name, edge, depth = queue.pop(0)
+        match = hints(name)
+        key = (name, edge, depth)
+        if match and key not in reported:
+            emit("dependency_hit", depth=depth, edge=edge, scopes=match)
+            reported.add(key)
         if name in visited:
             continue
         if len(visited) >= 24:
             PENDING.add("dependency_graph_limit")
             break
         visited.add(name)
-        match = hints(name)
-        if match:
-            emit("dependency_hit", depth=depth, edge=edge, scopes=match)
         if not name.endswith((".service", ".timer", ".socket")):
             PENDING.add("dependency_graph_contains_other_unit_types")
             continue
@@ -502,6 +522,8 @@ def dependencies_final():
                          for target in values.get(field, "").split())
         elif any(value for field, value in values.items() if field in EDGE_FIELDS):
             PENDING.add("dependency_depth_limit")
+    if queue:
+        PENDING.add("dependency_graph_limit")
     emit("dependency_visibility", visited=len(visited), complete=False)
     return data
 

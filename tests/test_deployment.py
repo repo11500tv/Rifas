@@ -623,6 +623,11 @@ if (root / f"fail-{step}").exists():
     def test_intervention_double_failure_persists_unverified_publication(self):
         intervention = self.intervention()
         intervention.publication = ["https://fixture.invalid/health"]
+        protected = [self.folder / name for name in ("production", "sorteos")]
+        self.deployment.protected = tuple(protected)
+        for directory in protected:
+            directory.mkdir()
+            (directory / "config").write_text("original")
 
         def verify(expected):
             if expected == 401 and (self.root / "settings.synthetic").read_text() == "after":
@@ -637,9 +642,17 @@ if (root / f"fail-{step}").exists():
         self.assertEqual(journal["phase"], "committed")
         self.assertEqual(journal["publication"], "unverified")
         self.assertEqual((self.root / "settings.synthetic").read_text(), "after")
+        retry = self.approval("recover-intervention", run=journal["run"],
+                              fingerprint=intervention.fingerprint, signer="staging")
+        with self.assertRaisesRegex(RuntimeError, "no se verificó el nuevo cierre"):
+            intervention.execute(retry, recovering=True)
+        self.assertEqual(self.deployment.status()["intervention"], journal)
+        for directory in protected:
+            self.assertEqual((directory / "config").read_text(), "original")
         events = (self.deployment.state / "events.jsonl").read_text()
         self.assertIn('"phase": "intervention_reclose_failed"', events)
         self.assertNotIn("intervention_reclose_verified", events)
+        self.assertEqual(events.count('"phase": "intervention_reclose_failed"'), 2)
         with self.assertRaisesRegex(ValueError, "intervención"):
             self.deployment.plan(self.bundle)
 
