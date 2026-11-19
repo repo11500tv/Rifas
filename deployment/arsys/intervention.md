@@ -449,3 +449,93 @@ de la barrera y la lista final de cambios e inversos con respaldo
 verificable. Solo entonces se fija el digest y se solicita aprobación
 expresa. Una recarga compartida requiere su propia autorización, y una
 recuperación o despliegue posterior requieren las suyas.
+
+## Revisión complementaria de evidencias — una sola pasada
+
+Partir de las tres salidas ya registradas y la
+[matriz de evidencias e inversos](evidence-and-inverses.example.json).
+La referencia a 8768, la separación de las bases, el diagnóstico de
+`getfacl` y el recuento de las 15 rutas se reutilizan. El anclaje literal de
+Nginx se registra aparte: mientras falte la correspondencia, no asignarlo
+a N01–N15. No repetir los inspectores ni usar `writable_by_probe` de root
+como evidencia de la futura identidad.
+
+### Decidir primero si bastan los datos saneados
+
+| Evidencia pendiente | Cuándo bastan los datos saneados | Si no bastan |
+| --- | --- | --- |
+| N01–N15 y precedencia | Cada `location` se puede relacionar con una línea, la cadena de includes, su contexto y su destino, con pruebas de por qué alcanza staging o queda descartada. | El custodio verifica solo el bloque y las directivas de selección, herencia o reescritura que faltan en la configuración del vhost. Registra su conclusión por referencia, sin exportar los bloques. Si depende de lo cargado, de un valor dinámico o de una ruta externa que la lectura no demuestra, dejar la comprobación de comportamiento para el ensayo autorizado. |
+| Apache/Plesk y acceso a 8768 | Los fragmentos y metadatos existentes permiten seguir el destino de cada entrada y descartar una ruta directa o alternativa. | Revisar en la vista de solo lectura del vhost afectado de Plesk los includes y reglas de Apache, y contrastar la exposición en cada frontera aplicable. Un listener loopback descarta una escucha remota en ese socket, pero no un proxy o reenvío alternativo. No repetir la medida del listener ni lanzar tráfico para resolver la duda. |
+| Escritores, Plesk y systemd | Existe evidencia de identidad, destino y mecanismo de pausa para el trabajo concreto y de que su parada no arrastra otra unidad. | Revisar solo las tareas del vhost en el planificador Plesk y los trabajos de la identidad implicada. Para una arista pendiente, consultar las propiedades pertinentes de esa unidad con `systemctl show`, sin `Environment`, `ExecStart` ni volcados de unidades. Registrar origen, destino, tipo de dependencia y ámbito de escritura. Un escritor intermitente ausente de la muestra sigue pendiente. |
+| Identidad, grupos y delegación | Los modos, grupos y permisos registrados bastan para rechazar o delimitar una propuesta. | Comparar solo los ancestros y destinos afectados y la delegación aplicable al operador, servicio y procesos auxiliares. El custodio solo comunica roles, operaciones permitidas y ámbitos excluidos. El acceso efectivo de una identidad que aún no existe, las ACL heredadas y la capacidad de stop/start requieren un ensayo posterior. |
+
+### Capturar solo la diferencia pendiente
+
+1. Abrir una única revisión autorizada, con el custodio de Arsys. Enumerar
+   primero los campos abiertos de una copia local de la matriz mediante
+   el comando de abajo. Cruzar sus identificadores con las evidencias ya
+   conservadas. Leer únicamente la fuente o propiedad que falte.
+2. Mantener en el entorno privado del custodio un registro de referencias:
+   `F01` identifica un archivo, `M01` el contexto y criterio de selección
+   de una ruta, y `E01` la fuente, revisión y conclusión que la respaldan.
+   Usar la vista local autorizada de Plesk y los puntos exactos de
+   configuración localizados en las salidas anteriores. No copiar
+   configuraciones ni bloques completos al chat, a Git o al informe.
+   No abrir archivos de contraseñas, volcar variables de entorno, leer
+   registros de usuarios ni mostrar el comando crudo de una tarea. Si una
+   directiva de enrutamiento o tarea mezcla datos necesarios con secretos,
+   el custodio la revisa en origen y anota únicamente el destino por
+   ámbito, la prioridad y el efecto. Si no puede aislarlos con seguridad,
+   dejar el campo pendiente. Los destinos y comandos exactos que necesite
+   el lote se mantienen en sus insumos privados revisados, sin credenciales.
+3. Asociar una sola ubicación `Fxx` y línea a cada N01–N15, con su testigo
+   `Mxx` y su referencia `Exx`. Para `staging_entry`, usar destino
+   `staging_8768` y confirmar por separado Basic y mantenimiento con
+   `verified`. Para `excluded`, documentar precedencia y destino ajeno
+   (`outside_staging`) y usar `not_applicable` en esas dos columnas.
+   Un bypass queda como `bypass` y bloquea. Una hipótesis queda
+   `unclassified` con la evidencia faltante a `null`. No cerrar una ruta
+   solo con un `401` o `503`.
+4. Los campos de identidad, publicación y escritores en la copia saneada
+   reciben referencias `Exx`, incluidos `verified_https_urls` y los datos
+   de identidad. El registro privado asociado a esa referencia conserva
+   la lista HTTPS real y la identidad que se incorporarán al lote
+   protegido. No poner esos valores en la matriz publicada. Volver a
+   validar únicamente la matriz local. El verificador muestra códigos
+   fijos, cuenta rutas y detecta la misma ubicación y contexto asignados a más de un
+   competidor. Comprueba formato y completitud, no verifica la verdad de
+   la evidencia ni concede autorización.
+
+Desde el checkout local, sin conexión a Arsys:
+
+```sh
+python -B -m deployment.arsys.evidence_review /ruta/local/matriz-saneada.json
+```
+
+El resultado sale con código 1 si falta evidencia y 2 si la matriz es
+inválida. Código 0 indica que los campos revisados tienen referencias
+válidas. `intervention_authorized` permanece en `false`. Los controles de
+huellas, copias y reversión siguen en el coordinador universal.
+
+### Separar aprovisionamiento y operación
+
+El administrador del host debe autorizar y, si se necesita, aprovisionar
+la cuenta y grupo dedicados, el tránsito por los padres, los permisos y
+ACL de los destinos de staging, el directorio de control y sus
+propietarios, las dependencias o *drop-ins* de systemd y la política de
+delegación. Debe revisar también qué cuenta puede capturar y restaurar ACL,
+propiedad y configuración. El acceso temporal a fuentes administrativas
+para verificar una incógnita se limita a lectura y no habilita cambios.
+Cualquier modificación de proxy o recarga compartida se aprueba aparte
+solo si se demuestra imprescindible.
+
+Tras ese aprovisionamiento, la identidad operativa de staging ejecutará
+el coordinador sin root. La delegación se limita a las operaciones
+revisadas sobre `rifas-pruebas.service`; el control de producción,
+`/sorteos` y los privilegios generales quedan fuera. Los auxiliares
+privilegiados que realmente necesite el lote requieren ámbito fijo,
+revisión separada e inverso. El ensayo autorizado debe confirmar el
+aislamiento, el drenaje, la autenticación y la barrera para todas las
+entradas, además de la recuperación externa. Con las evidencias
+pendientes, las rutas, el mecanismo de restauración ACL y las
+autorizaciones siguen bloqueados y el lote conserva sus marcadores.

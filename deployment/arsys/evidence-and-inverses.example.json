@@ -213,5 +213,44 @@
     "shared_reload_if_required": null,
     "external_recovery": null,
     "deployment": null
+  },
+  "reviewed_facts": {
+    "published_evidence_commit": "3ffeff183e7a8213ae4c3f444e147c4e57f68697",
+    "staging_data_root": "/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231",
+    "staging_backend": {
+      "port": 8768,
+      "observed_listener_count": 1,
+      "observed_loopback_only": true
+    },
+    "nginx_anchor": {
+      "file": "vhost_nginx.conf",
+      "location_line": 38,
+      "auth_basic_line": 39,
+      "proxy_pass_line": 42,
+      "effective_verified": false,
+      "linked_competing_slot": null
+    },
+    "acl_probe": {
+      "getfacl": "executable_missing",
+      "attributes_in_sample": "attribute_absent",
+      "future_identity_access_verified": false
+    },
+    "control_parent": {
+      "path": "/srv/rifas-deploy/staging",
+      "observed_exists": false
+    },
+    "staging_confinement": {
+      "kill_mode": "control-group",
+      "protect_system_strict": false
+    }
+  },
+  "review_reference_policy": {
+    "classification": "Redacted references only; resolve aliases in a private local register",
+    "unit_and_proxy_publication_values": "Keep actual values in the protected signed site recipe",
+    "route_witnesses": {
+      "reference_format": "E01",
+      "file_format": "F01",
+      "effective_match_format": "M01"
+    }
   }
 }
