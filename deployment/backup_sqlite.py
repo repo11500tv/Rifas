@@ -98,7 +98,7 @@ def write_inventory(records, destination):
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
             json.dump(content, f, indent=2, ensure_ascii=False)
-            f.write('\\n')
+            f.write('\n')
             f.flush()
             os.fsync(f.fileno())
 

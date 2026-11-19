@@ -1,0 +1,9 @@
+{
+  "package": "sorteos",
+  "version": "2.4.0",
+  "platform_from": ["2.3.1"],
+  "platform_to": "2.3.1",
+  "schema": "sorteos-v2",
+  "migration": "sorteos-2.4.0",
+  "checks": ["sorteos"]
+}

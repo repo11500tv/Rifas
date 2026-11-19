@@ -5,7 +5,7 @@ from flask import Flask, request, redirect, url_for, session, render_template_st
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.environ.get('RIFAS_DATA_ROOT') or Path(__file__).resolve().parents[1]).resolve()
 DB = ROOT / 'central' / 'plataforma.sqlite'
 ENTITIES = ROOT / 'entidades'
 PLATFORM_VERSION = '2.3.1'
