@@ -160,37 +160,13 @@ o Apache. Un ensayo de recuperación externa y un despliegue posterior
 tienen autorizaciones propias. El perfil de release continúa bloqueado
 hasta comprobar aislamiento y recuperación.
 
-## Cierre de 2E — Datos incorporados y verificación puntual
+## Cierre de 2E — Datos incorporados
 
-El [inventario reutilizable](inventory.json) recoge la salida comunicada de
-`bd21316`. La referencia `vhost_nginx.conf:42` y el listener local único
-en 8768 son hechos observados. Cinco archivos se examinaron. Ninguna
-consulta ACL dio resultado; el inspector anterior reducía todos los
-fallos a «sin salida» y descartaba el diagnóstico. Por ello aún no se
-puede atribuir el fallo a falta del binario, permisos de ejecución o
-tránsito, error de la herramienta o falta de soporte.
-
-Desde PuTTY y con autorización de lectura, pegar una sola vez el bloque
-completo de [inspect-route-acl-readonly.sh](inspect-route-acl-readonly.sh).
-Este bloque solo reintenta `getfacl` en la raíz de staging para clasificar
-el fallo. Como alternativa consulta los atributos POSIX de acceso y
-por defecto con `os.getxattr`, sin instalar paquetes, usar sudo, escribir
-archivos ni publicar nombres, IDs de las ACL o diagnósticos crudos.
-`attribute_absent` significa que en ese objeto no se observó el atributo;
-no demuestra el acceso efectivo de la cuenta futura ni los permisos en
-los descendientes. Si se deniega el acceso o el sistema de archivos no
-lo admite, mantener la ACL como no verificada.
-
-Para Nginx el bloque parte de la referencia literal a 8768 en la línea 42.
-Si la referencia cambió o la sintaxis no se interpreta de forma segura,
-lo indica y no selecciona otra ruta. Inspecciona el bloque que contiene
-la referencia, sus ancestros, condiciones de mantenimiento y reglas por
-método, y extrae indicios de los includes directos acotados al vhost.
-Muestra solo tipos de directiva y números de línea. La presencia de
-`deny` o de un `return 503` no certifica su precedencia ni su alcance:
-hay que revisar la herencia, las condiciones, los includes externos o
-dinámicos, la selección del virtual host y las rutas alternativas.
-El bloque no envía peticiones, no abre SQLite ni carga Nginx.
+El [inventario reutilizable](inventory.json) conserva las dos inspecciones
+comunicadas. La referencia a 8768, el listener local y el diagnóstico de
+`getfacl` ya se registraron. Los dos bloques de inspección quedan como
+referencia reproducible. Para preparar el lote basta resolver las comprobaciones
+que siguen abiertas en la segunda inspección.
 
 ### Permisos que debe verificar el lote
 
@@ -216,7 +192,7 @@ requieren su propia delegación acotada y hay que comprobarla en Arsys
 para demostrar el aislamiento efectivo.
 
 Los marcadores del ejemplo permanecen intencionadamente sin resolver.
-Antes de firmar el lote faltan: el resultado y alcance de la lectura ACL;
+Antes de firmar el lote faltan: los permisos efectivos de la futura identidad;
 la publicación y la barrera efectivas, incluidas las entradas alternativas;
 el inventario de trabajos y dependencias indirectas; la cuenta y
 delegación concretas; y la lista exacta y verificable de cambios y
@@ -231,3 +207,72 @@ Nginx, Plesk o Apache, si se demuestra imprescindible; (5) prueba de
 recuperación externa y eventual despliegue. La aprobación firmada debe
 vincularse al lote final y su digest; si hace falta recuperar una
 interrupción, se requiere `recover-intervention` vinculada a su ejecución.
+
+## Segunda inspección de 2E — Decisiones para el lote
+
+La segunda salida diagnostica `getfacl` como `executable_missing`.
+Se observaron atributos POSIX de acceso y por defecto ausentes en los
+directorios existentes examinados. No hace falta repetir ese diagnóstico
+ni instalar la herramienta para continuar la revisión. La ausencia de
+atributos en esa muestra no prueba los permisos efectivos de la futura
+identidad en los descendientes, montajes ni grupos. El directorio padre
+de control de staging tampoco existe. El lote debe inventariarlo como
+ausente antes de aprovisionarlo y retirar únicamente lo que haya creado
+si revierte.
+
+El bloque literal de Nginx se ancla en `vhost_nginx.conf`: `location`
+en la línea 38, `auth_basic` en la 39 y `proxy_pass` a 8768 en la 42,
+con una coincidencia. **Conservar la autenticación existente**, incluidos
+directivas, ámbito, fichero de credenciales y permisos. Registrar su
+configuración de referencia por huella o metadatos dentro del respaldo
+protegido, sin publicar valores. Si la barrera existente cubre íntegramente
+las entradas y devuelve 503, reutilizarla. Solo si se demuestra que hace
+falta otro cambio, proponer una regla acotada de mantenimiento para las
+rutas de staging, sin reemplazar `auth_basic` ni regenerar o recargar
+configuración compartida sin autorización.
+
+Antes de fijar el digest final:
+
+1. Confirmar el virtual host efectivo, su orden de includes y herencia y
+   la precedencia de los posibles `location` competidores. Enumerar las
+   entradas alternativas, incluidos alias y redirecciones HTTP a HTTPS,
+   y verificar que todas terminan en la misma protección o quedan
+   explícitamente bloqueadas. Confirmar que no existe una entrada directa
+   externa a 8768. Guardar solo evidencias saneadas.
+2. Enumerar procesos y tareas de staging en systemd, cron de la identidad
+   que los ejecuta y planificador Plesk. Revisar dependencias indirectas,
+   acciones de parada y reinicio y procesos fuera de la unidad. Identificar
+   la unidad histórica si la hay; si su supervisor es otro, verificar
+   por separado que la delegación y los comandos no pueden controlarlo.
+   Incluir la evidencia y el inventario de tareas entre los insumos
+   revisados del lote. Nada de esto se deduce de una consulta de
+   dependencias directas.
+3. Completar los pasos ya establecidos de cuenta y grupo dedicados,
+   tránsito sin escritura en los padres, escritura limitada a staging,
+   directorio de control, confinamiento y delegación. Validar el cambio
+   de forma dirigida, respaldar y verificar configuración, propietarios y
+   permisos, conservar el inventario de ausencias y especificar el inverso
+   de cada cambio. La muestra de ACL observada no sustituye este control.
+
+El lote firmado incluye `publication` con las sondas finales HTTPS de
+todas las entradas protegidas y `unit_scope` con la unidad de staging,
+sus auxiliares systemd revisados y las unidades protegidas. Producción
+debe figurar en las protegidas. Indicar la unidad histórica solo si se
+confirma; una lista vacía de auxiliares no equivale a haberlos descartado.
+El coordinador comprueba dependencias **directas** entre esas unidades
+antes de cerrar y antes de reabrir, y comprueba las sondas sin credenciales
+ni seguimiento de redirecciones. Exige `401` con desafío `Basic` antes de
+intervenir y al reabrir, y `503` con mantenimiento. Una reapertura que no
+confirma Basic vuelve a cerrar la publicación si el cierre es viable y
+conserva el estado pendiente. El paso revisado de reapertura debe ser
+repetible incluso si el cierre anterior detuvo el backend. La sonda
+privada sigue exigiendo `200` y no pasa por la autenticación pública.
+
+Estas comprobaciones se ejecutan **solo dentro de una intervención
+posteriormente autorizada**. Una respuesta anónima no prueba por sí sola
+que la ruta llega al backend previsto, que todas las variantes quedaron
+incluidas ni que una sesión autenticada se conserva. La revisión de
+publicación y un ensayo autorizado con la autenticación existente siguen
+siendo necesarios. El [lote de ejemplo](intervention.example.json) conserva
+marcadores hasta completar esos datos y los comandos efectivos,
+incluida la reversión. No se ha autorizado ni ejecutado ningún cambio.

@@ -41,5 +41,15 @@
     "reopen": [
       "/srv/rifas-deploy/staging/reviewed/reopen"
     ]
+  },
+  "publication": [
+    "PUBLIC_HTTPS_HEALTH_PENDING"
+  ],
+  "unit_scope": {
+    "unit": "rifas-pruebas.service",
+    "auxiliary_units": [],
+    "protected_units": [
+      "rifas-platform.service"
+    ]
   }
 }

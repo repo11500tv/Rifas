@@ -5,11 +5,22 @@ import os
 from pathlib import Path
 import re
 import subprocess
+from urllib.parse import urlsplit
+from urllib.request import ProxyHandler, build_opener
 
 from deployment.artifact import digest
 from deployment.backup_integral import atomic_json, sync
 from deployment.backup_sqlite import sha256
+from deployment.hooks import probe_status
+from deployment.smoke import NoRedirect
+from deployment.structure import SYSTEMCTL, command
 
+
+RECIPE_FIELDS = {"format", "environment", "installation", "files", "steps"}
+DEPENDENCY_FIELDS = (
+    "Requires", "Requisite", "Wants", "BindsTo", "PartOf", "Conflicts", "ConsistsOf",
+    "PropagatesStopTo", "StopPropagatedFrom", "Triggers", "TriggeredBy", "OnFailure", "OnSuccess",
+)
 STEPS = {
     "validate", "backup", "verify_backup", "close", "apply", "verify",
     "rollback", "verify_rollback", "reopen",
@@ -23,13 +34,18 @@ class Intervention:
         raw = recipe_path.read_bytes()
         self.fingerprint = digest(raw)
         recipe = json.loads(raw)
-        if (set(recipe) != {"format", "environment", "installation", "files", "steps"}
+        fields = RECIPE_FIELDS | {"publication", "unit_scope"} if deployment.name == "staging" else RECIPE_FIELDS
+        if (set(recipe) != fields
                 or recipe["format"] != 1 or deployment.name not in {"staging", "synthetic"}
                 or recipe["environment"] != deployment.name
                 or recipe["installation"] != str(deployment.root)
                 or set(recipe["steps"]) != STEPS
                 or not isinstance(recipe["files"], dict) or not recipe["files"]):
             raise ValueError("Lote de intervención inválido o fuera del ámbito de staging")
+        self.publication = recipe.get("publication", [])
+        self.unit_scope = recipe.get("unit_scope")
+        if deployment.name == "staging":
+            self.validate_staging_scope()
         self.files = recipe["files"]
         self.steps = recipe["steps"]
         for name, argv in self.steps.items():
@@ -39,6 +55,55 @@ class Intervention:
         for path, fingerprint in self.files.items():
             if not Path(path).is_absolute() or not re.fullmatch(r"[a-f0-9]{64}", fingerprint):
                 raise ValueError("Entrada de lote inválida")
+
+    def validate_staging_scope(self):
+        if not isinstance(self.publication, list) or not self.publication:
+            raise ValueError("Enumerar todas las entradas HTTPS de staging revisadas")
+        for url in self.publication:
+            parsed = urlsplit(url)
+            if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
+                    or parsed.query or parsed.fragment or not parsed.path or parsed.port == 0):
+                raise ValueError("Entrada de staging inválida o con credenciales")
+        if len(set(self.publication)) != len(self.publication):
+            raise ValueError("Entradas de staging duplicadas")
+        scope = self.unit_scope
+        structure = self.deployment.structure
+        if (structure is None or not isinstance(scope, dict) or
+                set(scope) != {"unit", "auxiliary_units", "protected_units"} or
+                scope["unit"] != structure.settings["unit"]):
+            raise ValueError("El lote debe declarar la unidad de staging del perfil")
+        if not all(isinstance(scope[key], list) and all(isinstance(value, str) for value in scope[key])
+                   for key in ("auxiliary_units", "protected_units")):
+            raise ValueError("Declaración de unidades de la intervención inválida")
+        staged = {scope["unit"], *scope["auxiliary_units"]}
+        protected = set(scope["protected_units"])
+        if (not all(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.@-]*\.(?:service|timer|socket)", name)
+                    for name in staged | protected)
+                or structure.settings["peer_unit"] not in protected or staged & protected):
+            raise ValueError("Las unidades de staging se cruzan con un ámbito protegido")
+
+    def verify_publication(self, expected):
+        if self.publication:
+            opener = build_opener(ProxyHandler({}), NoRedirect())
+            for index, url in enumerate(self.publication, start=1):
+                if probe_status(opener, url) != expected:
+                    raise ValueError(f"Entrada pública {index}: no se verificó HTTP {expected}")
+            self.deployment.event("intervention_publication_checked",
+                                  expected=expected, entries=len(self.publication))
+
+    def verify_dependencies(self):
+        if self.unit_scope is None:
+            return
+        protected = set(self.unit_scope["protected_units"])
+        for name in [self.unit_scope["unit"], *self.unit_scope["auxiliary_units"]]:
+            raw = command(SYSTEMCTL, "--no-pager", "show",
+                          "--property=" + ",".join(("Id", "LoadState", *DEPENDENCY_FIELDS)), name)
+            values = dict(line.split("=", 1) for line in raw.splitlines() if "=" in line)
+            if values.get("Id") != name or values.get("LoadState") != "loaded":
+                raise ValueError("No se pudo identificar una unidad revisada de staging")
+            if any(protected.intersection(values.get(field, "").split()) for field in DEPENDENCY_FIELDS):
+                raise ValueError("Dependencia directa de una unidad protegida")
+        self.deployment.event("intervention_dependencies_checked")
 
     def verify_review(self):
         if self.deployment.name == "staging" and (
@@ -86,14 +151,25 @@ class Intervention:
         self.deployment.event("intervention_step", step=name, outcome="passed")
 
     def finish(self, folder):
-        self.step("reopen", folder)
+        self.verify_dependencies()
+        try:
+            self.step("reopen", folder)
+            self.verify_publication(401)
+        except Exception:
+            if self.publication:
+                self.verify_dependencies()
+                self.step("close", folder)
+                self.verify_publication(503)
+            raise
         self.pending.unlink()
         sync(self.pending.parent)
 
     def recover(self, journal, folder):
         if journal["phase"] == "changing":
             # Si cerrar o restaurar falla, conservar el estado y la barrera.
+            self.verify_dependencies()
             self.step("close", folder)
+            self.verify_publication(503)
             self.step("verify_backup", folder)
             self.step("rollback", folder)
             self.step("verify_rollback", folder)
@@ -125,6 +201,8 @@ class Intervention:
             deployment.run = grant["run"]
             folder = deployment.state / "interventions" / grant["run"]
             folder.mkdir(parents=True, mode=0o700)
+            self.verify_dependencies()
+            self.verify_publication(401)
             self.step("validate", folder)
             self.step("backup", folder)
             self.step("verify_backup", folder)
@@ -135,8 +213,12 @@ class Intervention:
             # parcialmente ejecutado debe poder recuperarse.
             self.checkpoint(journal, "changing")
             try:
+                self.verify_dependencies()
                 self.step("close", folder)
+                self.verify_publication(503)
                 self.step("apply", folder)
+                self.verify_dependencies()
+                self.verify_publication(503)
                 self.step("verify", folder)
             except Exception:
                 self.recover(journal, folder)

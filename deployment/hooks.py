@@ -16,6 +16,21 @@ from deployment.smoke import NoRedirect
 from deployment.backup_integral import atomic_json, sync
 
 
+def probe_status(opener, url):
+    try:
+        with opener.open(url, timeout=2) as response:
+            return response.status
+    except HTTPError as error:
+        with error:
+            if error.code == 401:
+                challenges = error.headers.get_all("WWW-Authenticate", [])
+                if not any(re.match(r"(?i)^basic(?:[ \t]|$)", value.strip()) for value in challenges):
+                    return None
+            return error.code
+    except (OSError, URLError):
+        return None
+
+
 class Hooks:
     def __init__(self, settings):
         self.gate = Path(settings["gate"])
@@ -63,6 +78,9 @@ class Hooks:
         if not isinstance(extra_urls, list):
             raise ValueError("Las sondas públicas adicionales deben ser una lista")
         self.public_urls = [settings["closed_url"], *extra_urls]
+        self.public_open_status = settings.get("public_open_status", 200)
+        if self.public_open_status not in (200, 401):
+            raise ValueError("La reapertura pública debe esperar HTTP 200 o autenticación Basic")
         for url in [*self.public_urls, settings["private_url"]]:
             parsed = urlsplit(url)
             if (parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username is not None
@@ -113,14 +131,7 @@ class Hooks:
             self.check_scope(os.environ.get("RIFAS_DATA_ROOT", ""), os.environ.get("RIFAS_RELEASE_ROOT"))
 
     def status(self, url):
-        try:
-            with self.opener.open(url, timeout=2) as response:
-                return response.status
-        except HTTPError as error:
-            with error:
-                return error.code
-        except (OSError, URLError):
-            return None
+        return probe_status(self.opener, url)
 
     def wait(self, url, expected):
         deadline = time.monotonic() + 20
@@ -130,8 +141,7 @@ class Hooks:
             time.sleep(0.1)
         raise RuntimeError(f"No se verificó HTTP {expected} en la sonda configurada")
 
-    def drain(self):
-        self.check_invocation()
+    def close_gate(self):
         fd = os.open(self.gate, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o644)
         try:
             info = os.fstat(fd)
@@ -143,6 +153,10 @@ class Hooks:
         sync(self.gate.parent)
         for url in self.public_urls:
             self.wait(url, 503)
+
+    def drain(self):
+        self.check_invocation()
+        self.close_gate()
         self.run("pause_jobs")
         self.run("stop")
 
@@ -180,8 +194,14 @@ class Hooks:
         self.run("resume_jobs")
         self.gate.unlink(missing_ok=True)
         sync(self.gate.parent)
-        for url in self.public_urls:
-            self.wait(url, 200)
+        try:
+            for url in self.public_urls:
+                self.wait(url, self.public_open_status)
+        except Exception:
+            if self.public_open_status == 401:
+                self.close_gate()
+                self.run("pause_jobs")
+            raise
 
 
 def main():

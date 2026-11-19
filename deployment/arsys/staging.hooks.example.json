@@ -21,5 +21,6 @@
       "RIFAS_SESSION_COOKIE_NAME": "rifas_staging_session",
       "RIFAS_SESSION_COOKIE_PATH": "URL_PREFIX_PENDING"
     }
-  }
+  },
+  "public_open_status": 401
 }

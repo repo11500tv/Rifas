@@ -33,6 +33,28 @@
         "kill_mode": "control-group",
         "protect_system_strict": false,
         "direct_dependency_references_to_production_or_legacy_detected": false
+      },
+      "inspection_2e_followup": {
+        "source": "Segunda inspección de solo lectura de Arsys comunicada por el usuario",
+        "getfacl": "executable_missing",
+        "existing_directories_acl": {
+          "access": "attribute_absent",
+          "default": "attribute_absent"
+        },
+        "staging_control_parent": "path_missing",
+        "nginx": {
+          "file": "vhost_nginx.conf",
+          "location_line": 38,
+          "auth_basic_line": 39,
+          "proxy_pass_line": 42,
+          "backend_port": 8768,
+          "expected_literal_matches": 1,
+          "effective_verified": false,
+          "pending": [
+            "competing_locations_and_public_aliases",
+            "inheritance_from_effective_http_vhost"
+          ]
+        }
       }
     },
     "legacy": {
@@ -49,7 +71,7 @@
     "writer_and_scheduler_coverage",
     "effective_sqlite_contract_and_catalog",
     "complete_external_restore",
-    "acl_query_failure_and_effective_future_identity",
+    "effective_acl_and_permissions_of_future_staging_identity",
     "staging_control_directory_and_systemd_hardening"
   ],
   "checked_each_operation": [
