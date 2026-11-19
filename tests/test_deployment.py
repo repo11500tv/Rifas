@@ -620,6 +620,29 @@ if (root / f"fail-{step}").exists():
         self.assertFalse(intervention.pending.exists())
         self.assertEqual((self.root / "settings.synthetic").read_text(), "after")
 
+    def test_intervention_double_failure_persists_unverified_publication(self):
+        intervention = self.intervention()
+        intervention.publication = ["https://fixture.invalid/health"]
+
+        def verify(expected):
+            if expected == 401 and (self.root / "settings.synthetic").read_text() == "after":
+                (self.root / "fail-close").touch()
+                raise ValueError("alias no longer requires Basic")
+
+        intervention.verify_publication = verify
+        grant = self.approval("intervene", fingerprint=intervention.fingerprint, signer="staging")
+        with self.assertRaisesRegex(RuntimeError, "no se verificó el nuevo cierre"):
+            intervention.execute(grant)
+        journal = self.deployment.status()["intervention"]
+        self.assertEqual(journal["phase"], "committed")
+        self.assertEqual(journal["publication"], "unverified")
+        self.assertEqual((self.root / "settings.synthetic").read_text(), "after")
+        events = (self.deployment.state / "events.jsonl").read_text()
+        self.assertIn('"phase": "intervention_reclose_failed"', events)
+        self.assertNotIn("intervention_reclose_verified", events)
+        with self.assertRaisesRegex(ValueError, "intervención"):
+            self.deployment.plan(self.bundle)
+
     def test_structural_writer_guard_blocks_before_snapshot_or_migration(self):
         structure = Mock()
         structure.settings = {"unit": "synthetic.service"}

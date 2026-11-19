@@ -199,8 +199,13 @@ class Hooks:
                 self.wait(url, self.public_open_status)
         except Exception:
             if self.public_open_status == 401:
-                self.close_gate()
-                self.run("pause_jobs")
+                try:
+                    self.close_gate()
+                    self.run("pause_jobs")
+                except Exception as closure:
+                    raise RuntimeError(
+                        "Falló la reapertura y no se completó el nuevo cierre"
+                    ) from closure
             raise
 
 

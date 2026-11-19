@@ -276,3 +276,55 @@ publicación y un ensayo autorizado con la autenticación existente siguen
 siendo necesarios. El [lote de ejemplo](intervention.example.json) conserva
 marcadores hasta completar esos datos y los comandos efectivos,
 incluida la reversión. No se ha autorizado ni ejecutado ningún cambio.
+
+## Inspector final de cierre operativo
+
+Para esta revisión, ejecutar **solo** el contenido completo de
+[inspect-route-acl-readonly.sh](inspect-route-acl-readonly.sh) en la sesión
+PuTTY autorizada. El nombre histórico se conserva para no abrir otro
+procedimiento. La versión final ya no ejecuta los bloques de diagnóstico
+de ACL ni el inventario de SQLite. Entrega JSON por pantalla; no redirigir
+la salida a un archivo en Arsys. No usa sudo, no escribe archivos, no abre
+SQLite, no ejecuta HTTP ni recargas. El sistema puede registrar la sesión
+o actualizar metadatos de acceso según su configuración.
+
+| Salida | Evidencia de lectura y límite |
+| --- | --- |
+| `include_order`, `staging_route_candidate`, `competing_route_hint`, `alternative_review_hint` | Recorre los includes absolutos visibles y acotados a Nginx y al vhost Plesk, en orden estático, desde la ruta visible del proceso maestro si se reconoce y está dentro del ámbito, o desde `/etc/nginx/nginx.conf` como referencia. Localiza proxies directos a 8768 y upstreams nominales, reglas de sus bloques y posibles competidores. Los archivos reciben números, con referencias al include padre, y se omiten hostnames, credenciales, rutas privadas y argumentos. Algunos candidatos de Apache se indican por línea. No determina si el proceso cargó esos mismos archivos, usa otro prefijo o una versión anterior, o cómo resuelven includes externos o rutas dinámicas. |
+| `effective_route_hint`, `conditional_route_hint`, `publication` | Señala autenticación, reglas de acceso, indicios de `503` y la presencia del marcador conocido. Un marcador o `return 503` es evidencia estática. Falta demostrar su alcance y precedencia sobre Basic para cada entrada. |
+| `writer_hint`, `cron_hint`, `dependency_hit` | Identifica descriptores de escritura y mapeos compartidos observables, coincidencias de cron del sistema y del usuario activo, y el grafo systemd de staging con límites de profundidad y volumen. Omite nombres de cuenta, comandos y contenido de trabajos. Una muestra parcial o vacía no descarta escritores inactivos. Confirmar tareas Plesk con su vista de solo lectura autorizada y revisar trabajos indirectos y fuera de systemd. |
+| `permission_hint`, `mount_hint`, `delegation_hint` | Muestra permisos respecto del lector, relación de las identidades actuales, montajes relevantes e indicios estáticos de sudo/polkit. No acredita los permisos de una identidad aún no provisionada, los montajes de su namespace ni la autorización efectiva de una delegación. |
+
+### Criterios objetivos para cerrar el lote
+
+1. Disponer de un mapa revisado del virtual host cargado y su cadena de
+   includes, con cada hostname, puerto, prefijo, redirección, ruta directa
+   y entrada alternativa que pueda llegar a staging. Justificar los
+   descartes, incluidos Apache y 8768. Acordar las sondas con ese mapa.
+2. Vincular cada escritor o planificador a su identidad y mecanismo
+   de pausa o drenaje. Confirmar que parar staging no arrastra producción
+   ni `/sorteos`. Una lectura con límites de visibilidad no permite
+   declarar ausentes los escritores.
+3. Confirmar los ámbitos efectivos de la futura cuenta, los grupos, ACL,
+   montajes, namespace y delegación exacta. El ensayo autorizado debe
+   verificar que staging solo escribe sus propios datos y controla su
+   unidad, sin realizar escrituras de prueba en producción ni `/sorteos`.
+4. Verificar en un ensayo autorizado la barrera para **todas** las entradas
+   del mapa y confirmar que la autenticación existente funciona después de
+   reabrir. Las sondas `401 Basic` y `503` solo prueban las URLs consultadas.
+   No demuestran cobertura de alias, acceso directo ni prioridad de
+   reglas. Conservar y reutilizar la barrera existente si pasa el ensayo.
+5. Revisar el inventario exacto de cambios, copias e inversos, las pruebas
+   de recuperación acordadas y el digest del lote. Mantener marcadores
+   pendientes si falta cualquiera de estas evidencias. Las autorizaciones
+   de inspección, cambios, prueba de recuperación y despliegue son
+   independientes.
+
+Si fallan la reapertura y el cierre de contingencia, el coordinador
+conserva la intervención pendiente y registra
+`publication=unverified`. También se mantiene pendiente si el comando de
+cierre vuelve con éxito pero no se verifica el `503`. Un cierre verificado
+puede quedar como `closed_verified` sin que ello signifique que la
+reapertura o recuperación terminó. No ejecutar un release mientras este
+estado siga pendiente. Revisar la barrera y usar el mismo lote con la
+autorización independiente de recuperación.

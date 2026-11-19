@@ -150,16 +150,30 @@ class Intervention:
             raise RuntimeError(f"Falló el paso de intervención: {name}") from None
         self.deployment.event("intervention_step", step=name, outcome="passed")
 
-    def finish(self, folder):
+    def finish(self, folder, journal):
         self.verify_dependencies()
+        if self.publication:
+            # Persistir antes de abrir: un corte aquí deja la barrera sin
+            # confirmar incluso si el paso llegó a admitir tráfico.
+            journal["publication"] = "unverified"
+            self.checkpoint(journal, journal["phase"])
         try:
             self.step("reopen", folder)
             self.verify_publication(401)
         except Exception:
             if self.publication:
-                self.verify_dependencies()
-                self.step("close", folder)
-                self.verify_publication(503)
+                try:
+                    self.verify_dependencies()
+                    self.step("close", folder)
+                    self.verify_publication(503)
+                except Exception as closure:
+                    self.deployment.event("intervention_reclose_failed", barrier="unverified")
+                    raise RuntimeError(
+                        "Falló la reapertura y no se verificó el nuevo cierre; intervención pendiente"
+                    ) from closure
+                journal["publication"] = "closed_verified"
+                self.checkpoint(journal, journal["phase"])
+                self.deployment.event("intervention_reclose_verified", barrier="closed")
             raise
         self.pending.unlink()
         sync(self.pending.parent)
@@ -176,7 +190,7 @@ class Intervention:
             self.checkpoint(journal, "rolled_back")
         elif journal["phase"] not in {"committed", "rolled_back"}:
             raise ValueError("Fase de intervención desconocida")
-        self.finish(folder)
+        self.finish(folder, journal)
 
     def execute(self, approval, *, recovering=False):
         deployment = self.deployment
@@ -224,4 +238,4 @@ class Intervention:
                 self.recover(journal, folder)
                 raise
             self.checkpoint(journal, "committed")
-            self.finish(folder)
+            self.finish(folder, journal)

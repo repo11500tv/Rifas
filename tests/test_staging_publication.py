@@ -3,10 +3,10 @@
 from email.message import Message
 import io
 from unittest import TestCase
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 from urllib.error import HTTPError
 
-from deployment.hooks import probe_status
+from deployment.hooks import Hooks, probe_status
 from deployment.intervention import Intervention
 
 
@@ -63,12 +63,51 @@ class StagingPublicationTest(TestCase):
 
     def test_exposed_reopen_recloses_without_erasing_pending_state(self):
         self.transaction.pending = Mock()
-        with (patch.object(self.transaction, "verify_dependencies"),
+        journal = {"phase": "committed"}
+        with (patch.object(self.transaction, "checkpoint"), patch.object(self.transaction, "verify_dependencies"),
               patch.object(self.transaction, "step") as step,
               patch.object(self.transaction, "verify_publication",
                            side_effect=[ValueError("lost Basic"), None]) as publication):
             with self.assertRaisesRegex(ValueError, "lost Basic"):
-                self.transaction.finish("fixture")
+                self.transaction.finish("fixture", journal)
         self.assertEqual([call.args[0] for call in step.call_args_list], ["reopen", "close"])
         self.assertEqual([call.args[0] for call in publication.call_args_list], [401, 503])
         self.transaction.pending.unlink.assert_not_called()
+        self.assertEqual(journal["publication"], "closed_verified")
+
+    def test_failed_second_close_keeps_journal_and_reports_unverified(self):
+        for close_fails in (True, False):
+            with self.subTest(close_fails=close_fails):
+                journal = {"phase": "committed", "run": "fixture", "digest": "fixture"}
+                self.transaction.pending = Mock()
+                self.transaction.deployment.reset_mock()
+                with (patch.object(self.transaction, "checkpoint") as checkpoint,
+                      patch.object(self.transaction, "verify_dependencies"),
+                      patch.object(self.transaction, "step") as step,
+                      patch.object(self.transaction, "verify_publication") as publication):
+                    step.side_effect = [None, RuntimeError("close failed") if close_fails else None]
+                    publication.side_effect = [ValueError("lost Basic"), ValueError("still public")]
+                    with self.assertRaisesRegex(RuntimeError, "no se verificó el nuevo cierre"):
+                        self.transaction.finish("fixture", journal)
+                    checkpoint.assert_called_once_with(ANY, "committed")
+                self.assertEqual(journal["publication"], "unverified")
+                self.transaction.pending.unlink.assert_not_called()
+                self.transaction.deployment.event.assert_called_once_with(
+                    "intervention_reclose_failed", barrier="unverified",
+                )
+
+    def test_release_hook_also_fails_if_both_reopen_and_reclose_fail(self):
+        hook = Hooks.__new__(Hooks)
+        hook.settings = {"private_url": "http://127.0.0.1:8768/health"}
+        hook.public_urls = self.transaction.publication
+        hook.public_open_status = 401
+        hook.gate = Mock()
+        hook.check_invocation = Mock()
+        hook.run = Mock()
+        hook.wait = Mock(side_effect=[None, RuntimeError("lost Basic")])
+        hook.close_gate = Mock(side_effect=RuntimeError("no 503"))
+        with (patch.dict("os.environ", {"RIFAS_RELEASE_ROOT": "/fixture"}),
+              patch("deployment.hooks.sync")):
+            with self.assertRaisesRegex(RuntimeError, "no se completó el nuevo cierre"):
+                hook.resume()
+        hook.close_gate.assert_called_once()

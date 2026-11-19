@@ -295,7 +295,7 @@ class Deployment:
         if intervention.is_file():
             journal = json.loads(intervention.read_text())
             return {"environment": self.name, "installation": str(self.root), "intervention": {
-                key: journal[key] for key in ("run", "digest", "phase")
+                key: journal[key] for key in ("run", "digest", "phase", "publication") if key in journal
             }}
         if not self.pending.exists():
             return {"environment": self.name, "installation": str(self.root), "pending": None}

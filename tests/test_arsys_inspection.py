@@ -104,3 +104,33 @@ class ArsysInspectionTest(unittest.TestCase):
             self.assertEqual(namespace["acl_xattr"](Path("/fixture"), "access"), {"state": "path_denied"})
         with patch("subprocess.run", side_effect=FileNotFoundError):
             self.assertEqual(namespace["acl_tool"](Path("/fixture")), "executable_missing")
+
+    def test_final_inspector_expands_includes_in_order_and_hides_vhost_values(self):
+        script = Path(__file__).resolve().parents[1] / "deployment/arsys/inspect-route-acl-readonly.sh"
+        namespace = {"__name__": "fixture"}
+        exec(compile(shlex.split(script.read_text())[-1], str(script), "exec"), namespace)
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp, contextlib.redirect_stdout(output):
+            root = Path(temp)
+            nginx = root / "nginx"
+            vhost = root / "vhost"
+            nginx.mkdir()
+            vhost.mkdir()
+            (nginx / "nginx.conf").write_text(
+                f"http {{ include {nginx}/upstream.conf; include {vhost}/vhost_nginx.conf; }}"
+            )
+            (nginx / "upstream.conf").write_text("upstream private_target { server 127.0.0.1:8768; }")
+            (vhost / "vhost_nginx.conf").write_text(
+                "server { server_name private.example.invalid; "
+                "location /privatealias { auth_basic hidden; proxy_pass http://private_target; } }"
+            )
+            namespace["NGINX"], namespace["BASE"] = nginx, vhost
+            namespace["proxy_final"]()
+        rows = [json.loads(line) for line in output.getvalue().splitlines()]
+        includes = [row for row in rows if row["section"] == "include_order"]
+        self.assertEqual([row["order"] for row in includes], [1, 2])
+        self.assertTrue(any(row.get("via_named_upstream") for row in rows))
+        self.assertTrue(any(row.get("directive") == "auth_basic" for row in rows))
+        self.assertTrue(any(row.get("effective_verified") is False for row in rows))
+        for value in ("hidden", "private.example.invalid", "privatealias", "private_target"):
+            self.assertNotIn(value, output.getvalue())
