@@ -1,0 +1,42 @@
+{
+  "package": "google-oauth",
+  "version": "2.4.2",
+  "platform_from": [
+    "2.3.1"
+  ],
+  "platform_to": "2.3.1",
+  "schema": {
+    "module": "google_oidc",
+    "from": [
+      null
+    ],
+    "to": "2.4.2",
+    "tables": {
+      "participant_external_identities": {
+        "file": "platform_app/participant_google_schema.py",
+        "symbol": "GOOGLE_SCHEMA"
+      },
+      "participant_google_audit": {
+        "file": "platform_app/participant_google_schema.py",
+        "symbol": "GOOGLE_SCHEMA"
+      },
+      "participant_google_authorizations": {
+        "file": "platform_app/participant_google_schema.py",
+        "symbol": "GOOGLE_SCHEMA"
+      },
+      "participant_google_pending_registration": {
+        "file": "platform_app/participant_google_schema.py",
+        "symbol": "GOOGLE_SCHEMA"
+      }
+    }
+  },
+  "migration": {
+    "file": "platform_app/participant_google_schema.py",
+    "function": "migrate_google_schema",
+    "arguments": {}
+  },
+  "requirements": "requirements-google.txt",
+  "checks": [
+    "google-oidc"
+  ]
+}

@@ -23,9 +23,11 @@ from deployment.deploy import Deployment
 from deployment.intervention import Intervention, STEPS
 from deployment.backup_sqlite import sha256
 from platform_app.raffle_schema import SCHEMA_RAFFLES
+from platform_app.participant_schema_complete import initialize_participant_schema
 
 PROJECT = Path(__file__).resolve().parents[1]
 RECIPE = "deployment/packages/sorteos_2.4.0.json"
+GOOGLE_RECIPE = "deployment/packages/google_oauth_2.4.2.json"
 READY = """
 from wsgi import app
 with app.test_client() as client:
@@ -71,6 +73,8 @@ app.wsgi_app = synthetic_write
         recipe = cls.repository / RECIPE
         recipe.parent.mkdir(parents=True)
         shutil.copy2(PROJECT / RECIPE, recipe)
+        shutil.copy2(PROJECT / GOOGLE_RECIPE, cls.repository / GOOGLE_RECIPE)
+        shutil.copy2(PROJECT / "requirements-google.txt", cls.repository / "requirements-google.txt")
         cls.bootstrap_recipe = str(Path(RECIPE).with_name("bootstrap.json"))
         (cls.repository / cls.bootstrap_recipe).write_text(json.dumps({
             "package": "bootstrap", "version": "1.0.0", "platform_from": [None],
@@ -660,6 +664,28 @@ if (root / f"fail-{step}").exists():
         self.assertEqual(events.count('"phase": "intervention_reclose_failed"'), 2)
         with self.assertRaisesRegex(ValueError, "intervención"):
             self.deployment.plan(self.bundle)
+
+    def test_signed_google_recipe_runs_through_universal_coordinator(self):
+        self.apply()  # Fixture de partida con Sorteos 2.4.0.
+        paths = schema.inventory(self.root, dry=True)
+        for path in paths[1:]:
+            with closing(sqlite3.connect(self.root / path)) as connection:
+                initialize_participant_schema(connection)
+        bundle, fingerprint = self.make_bundle(GOOGLE_RECIPE, "google")
+        self.assertTrue((bundle / "payload/requirements-google.txt").is_file())
+        self.deployment.checks["google-oidc"] = self.command(READY + """
+with app.test_client() as client:
+    assert client.get('/participantes/google/retorno').status_code == 404
+    assert client.get('/e/demo/participantes/acceso-codigo').status_code == 200
+""")
+        self.assertEqual(self.deployment.plan(bundle)["checks"], ["google-oidc"])
+        self.assertEqual(self.deployment.apply(bundle, self.approval("apply", fingerprint=fingerprint)), fingerprint)
+        contract = json.loads((bundle / "manifest.json").read_text())["schema"]
+        schema.validate(self.root, contract, target=True, expected=schema.expected_schema(bundle / "payload", contract))
+        with closing(sqlite3.connect(self.root / schema.CENTRAL)) as connection:
+            self.assertIsNone(connection.execute(
+                "SELECT name FROM sqlite_schema WHERE name='participant_external_identities'"
+            ).fetchone())
 
     def test_structural_writer_guard_blocks_before_snapshot_or_migration(self):
         structure = Mock()
