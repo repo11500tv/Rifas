@@ -75,6 +75,8 @@ def inventory(data, previous, extra, databases, *, restoring=False):
                 relative = path.relative_to(base)
                 confined(base, relative)
                 info = path.lstat()
+                if stat.S_ISREG(info.st_mode) and info.st_nlink != 1:
+                    raise ValueError(f"No se admiten enlaces físicos en componentes de recuperación: {path}")
                 if path in sidecars:
                     continue
                 if stat.S_ISDIR(info.st_mode):

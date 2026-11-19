@@ -324,6 +324,8 @@ deployment.apply(Path(sys.argv[2]), Path(sys.argv[3]))
                 "--config", str(hook_config)]
         hook_config.write_text(json.dumps({
             "gate": str(gate), "target": str(controls / "target.json"),
+            "scope": {"environment": "synthetic", "data_root": str(self.root),
+                      "baseline": str(self.baseline)},
             "closed_url": public + "/health", "private_url": private + "/health",
             "gunicorn": {"python": sys.executable,
                          "arguments": ["--bind", backend, "--graceful-timeout", "2"],
@@ -339,6 +341,7 @@ deployment.apply(Path(sys.argv[2]), Path(sys.argv[3]))
         self.deployment.hooks["ready"] = check
         self.deployment.checks["sorteos"] = [*check, "--raffle-id", "1", "--marker", "Texto sintetico"]
         process_env = {**os.environ, "RIFAS_RELEASE_ROOT": str(self.baseline), "RIFAS_DATA_ROOT": str(self.root),
+                       "RIFAS_DEPLOY_ENVIRONMENT": "synthetic",
                        "PYTHONDONTWRITEBYTECODE": "1"}
         gate.touch()
         subprocess.run(self.deployment.hooks["activate"], env=process_env, check=True)

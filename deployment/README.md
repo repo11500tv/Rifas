@@ -57,6 +57,9 @@ Un intento que ya consumió la aprobación exige una solicitud nueva.
 
 ## Configurar una instalación
 
+Los perfiles de staging y producción para Arsys y sus requisitos de
+aislamiento están en la [guía de Arsys](arsys/README.md).
+
 - Preparar una raíz independiente por instalación con `central/`, la plantilla
   y las bases de entidades. Crear `.rifas-deploy/` con modo 0700 y un archivo
   `environment` con el nombre exacto del entorno. Mantener estado, datos y

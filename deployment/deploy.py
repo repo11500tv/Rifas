@@ -92,6 +92,13 @@ class Deployment:
             raise ValueError("Rutas de instalación no admitidas")
         if signing_keys(self.approvers) & signing_keys(self.signers):
             raise ValueError("La confianza de aprobación debe ser independiente de la firma de releases")
+        protected = config.get("protected_paths", [])
+        if not isinstance(protected, list):
+            raise ValueError("protected_paths debe ser una lista de rutas absolutas")
+        self.protected = tuple(Path(path) for path in protected)
+        for path in self.protected:
+            if not path.is_absolute() or path.resolve() != path:
+                raise ValueError(f"Ruta protegida no canónica: {path}")
         self.hooks = config["hooks"]
         self.checks = config["checks"]
         self.runtime_python = Path(config["runtime_python"])
@@ -109,12 +116,29 @@ class Deployment:
                     or any(not isinstance(item, str) for item in command)
                     or not Path(command[0]).is_absolute() or not os.access(command[0], os.X_OK)):
                 raise ValueError("Los hooks requieren argv con ejecutable absoluto")
+        self.check_scope(self.baseline, self.backup_components)
         marker = self.state / "environment"
         if marker.is_symlink() or not marker.is_file() or marker.read_text().strip() != self.name:
             raise ValueError("La raíz no está registrada para el entorno de la configuración")
         self.pending = self.state / "pending.json"
         self.current = self.state / "current"
         self.run = None
+
+    def check_scope(self, previous, components):
+        scopes = snapshot.roots(self.root, previous, components)
+        paths = [self.state]
+        for name in ("lock", "events.jsonl", "pending.json", "runs", "used-approvals"):
+            path = self.state / name
+            if path.is_symlink() or (path.is_file() and path.stat().st_nlink != 1):
+                raise ValueError(f"Estado del coordinador compartido o inseguro: {path}")
+        for base, relatives in scopes.values():
+            paths.extend(base / relative for relative in relatives)
+        for path in paths:
+            if path.resolve() != path:
+                raise ValueError(f"Ruta gestionada no canónica: {path}")
+            if any(path.is_relative_to(protected) or protected.is_relative_to(path)
+                   for protected in self.protected):
+                raise ValueError(f"Ruta gestionada solapada con otro ámbito: {path}")
 
     def event(self, phase, **details):
         record = {"at": datetime.now(timezone.utc).isoformat(), "environment": self.name,
@@ -126,6 +150,7 @@ class Deployment:
 
     @contextmanager
     def lock(self):
+        self.check_scope(self.baseline, self.backup_components)
         if (not self.state.is_dir() or self.state.stat().st_uid != os.geteuid()
                 or self.state.stat().st_mode & 0o077):
             raise ValueError("Preaprovisionar .rifas-deploy con propietario operativo y modo 0700")
@@ -173,6 +198,7 @@ class Deployment:
     def preflight(self, bundle, *, dry):
         manifest, fingerprint = validate_artifact(bundle, self.signers)
         active = self.active()
+        self.check_scope(active, self.backup_components)
         prior = platform_version((active / "platform_app/__init__.py").read_bytes()) if active else None
         if prior not in manifest["platform_from"]:
             raise ValueError(f"Versión de plataforma de origen incompatible: {prior}")
@@ -262,6 +288,7 @@ class Deployment:
         if phase not in {"draining", "backed_up", "changing"}:
             raise ValueError("Fase de recuperación desconocida")
         previous = Path(journal["previous"]) if journal["previous"] else None
+        self.check_scope(previous, journal["components"])
         self.hook("drain", self.hooks["drain"], previous)
         if phase == "changing":
             snapshot.restore(
@@ -332,6 +359,7 @@ class Deployment:
             self.checkpoint(journal, "draining")
             try:
                 self.hook("drain", self.hooks["drain"], previous)
+                self.check_scope(previous, self.backup_components)
                 if schema.validate(
                     self.root, manifest["schema"], expected=expected,
                     target=manifest["migration"] is None,

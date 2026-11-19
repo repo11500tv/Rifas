@@ -30,6 +30,11 @@ def safe_database(root, relative, dry):
     path = root / relative
     if path.resolve() != path or not path.is_file():
         raise ValueError(f"Base ausente o ruta insegura: {relative}")
+    for candidate in (path, *(Path(str(path) + suffix) for suffix in ("-wal", "-journal", "-shm"))):
+        if candidate.is_symlink() or (candidate.exists() and (
+            not candidate.is_file() or candidate.stat().st_nlink != 1
+        )):
+            raise ValueError(f"SQLite o archivo auxiliar compartido o inseguro: {relative}")
     if dry and any(Path(str(path) + suffix).exists() for suffix in ("-wal", "-journal", "-shm")):
         raise ValueError(f"Simulación requiere una copia estable sin archivos auxiliares: {relative}")
     return path

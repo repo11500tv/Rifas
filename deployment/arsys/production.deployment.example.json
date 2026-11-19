@@ -1,0 +1,56 @@
+{
+  "environment": "production",
+  "data_root": "/var/www/vhosts/dealfonso.com/rifas",
+  "baseline": "/var/www/vhosts/dealfonso.com/rifas",
+  "protected_paths": [
+    "/var/www/vhosts/dealfonso.com/sorteos",
+    "/var/www/vhosts/dealfonso.com/rifas/staging",
+    "/srv/rifas-deploy/staging"
+  ],
+  "allowed_signers": "/srv/rifas-deploy/trust/release-signers",
+  "approval_signers": "/srv/rifas-deploy/production/trust/approval-signers",
+  "runtime_python": "/srv/rifas-deploy/production/venv/bin/python",
+  "backup_components": [
+    "ops-reviewed"
+  ],
+  "hooks": {
+    "drain": [
+      "/srv/rifas-deploy/production/bin/hook",
+      "drain"
+    ],
+    "activate": [
+      "/srv/rifas-deploy/production/bin/hook",
+      "activate"
+    ],
+    "resume": [
+      "/srv/rifas-deploy/production/bin/hook",
+      "resume"
+    ],
+    "ready": [
+      "/srv/rifas-deploy/production/venv/bin/python",
+      "/srv/rifas-deploy/coordinator/deployment/smoke.py",
+      "--base",
+      "PRIVATE_BASE_PENDING",
+      "--version",
+      "2.3.1",
+      "--slug",
+      "ENTITY_PENDING"
+    ]
+  },
+  "checks": {
+    "sorteos": [
+      "/srv/rifas-deploy/production/venv/bin/python",
+      "/srv/rifas-deploy/coordinator/deployment/smoke.py",
+      "--base",
+      "PRIVATE_BASE_PENDING",
+      "--version",
+      "2.3.1",
+      "--slug",
+      "ENTITY_PENDING",
+      "--raffle-id",
+      "ID_PENDING",
+      "--marker",
+      "MARKER_PENDING"
+    ]
+  }
+}

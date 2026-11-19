@@ -1,0 +1,24 @@
+{
+  "scope": {
+    "environment": "production",
+    "data_root": "/var/www/vhosts/dealfonso.com/rifas",
+    "baseline": "/var/www/vhosts/dealfonso.com/rifas"
+  },
+  "systemd_unit": "rifas-platform.service",
+  "gate": "/srv/rifas-deploy/production/control/maintenance",
+  "target": "/srv/rifas-deploy/production/control/release.json",
+  "closed_url": "PUBLIC_HEALTH_PENDING",
+  "additional_closed_urls": [],
+  "private_url": "PRIVATE_HEALTH_PENDING",
+  "gunicorn": {
+    "python": "/srv/rifas-deploy/production/venv/bin/python",
+    "arguments": [
+      "--bind",
+      "LOOPBACK_BIND_PENDING"
+    ],
+    "environment": {
+      "RIFAS_SESSION_COOKIE_NAME": "rifas_produccion_session",
+      "RIFAS_SESSION_COOKIE_PATH": "URL_PREFIX_PENDING"
+    }
+  }
+}
