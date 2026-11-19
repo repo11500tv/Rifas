@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rifas Benéficas - {{ entity_name }}</title>
+<style>
+body{font-family:Arial,sans-serif;background:#f4f6f8;
+margin:0;color:#243044}
+main{max-width:600px;margin:45px auto;padding:20px}
+header{text-align:center;margin-bottom:30px}
+h1{color:{{ primary_color }}}
+section{background:white;border-radius:12px;
+padding:25px;margin-bottom:20px;
+box-shadow:0 2px 10px #00000010}
+a.button{display:block;background:{{ primary_color }};color:white;
+padding:13px;text-align:center;text-decoration:none;
+border-radius:7px;margin-top:12px}
+a.secondary{background:{{ secondary_color }}}
+p{line-height:1.5}
+small{color:#667085}
+</style>
+</head>
+<body>
+<main>
+<header>
+{% if logo_path %}
+<img src="{{ logo_path }}" alt="Logotipo de {{ entity_name }}"
+style="max-width:180px;max-height:120px;object-fit:contain">
+{% endif %}
+<h1>Rifas Benéficas</h1>
+<h2>{{ entity_name }}</h2>
+<p>Bienvenido a nuestra plataforma de sorteos benéficos.</p>
+</header>
+<section>
+<h2>Participantes</h2>
+<p>Consulta los sorteos y gestiona tus participaciones.</p>
+<a class="button"
+href="{{ url_for('participant_access_v2.request_code', slug=slug) }}">
+Acceso de participantes
+</a>
+<a class="button secondary"
+href="{{ url_for('participant_registration_v2.registration_form', slug=slug) }}">
+Nuevo participante
+</a>
+</section>
+
+<footer style="text-align:center">
+<small>Rifas Benéficas</small>
+</footer>
+</main>
+</body>
+</html>

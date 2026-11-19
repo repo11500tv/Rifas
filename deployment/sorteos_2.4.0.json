@@ -1,0 +1,62 @@
+{
+  "manifest_version": 1,
+  "package": "sorteos",
+  "module_version": "2.4.0",
+  "platform_version": "2.3.1",
+  "status": "preparation",
+  "source_environment": "staging",
+  "files": [
+    {
+      "path": "platform_app/raffle_routes.py",
+      "sha256": "24fbe80355aa68f0786a14c2afa2fe0a43e4e583563cac959174ae32fa50f7a9"
+    },
+    {
+      "path": "platform_app/entity_routes.py",
+      "sha256": "a6115657425dfc02e8492fae2625591a1a44bf77a8523595f4ad843e099a1893"
+    },
+    {
+      "path": "platform_app/participant_raffle_purchases.py",
+      "sha256": "fd8a0594a8ab79fcfb9485a7d16c57189f1c91ffe3851dbb80c4a9789448b7ee"
+    },
+    {
+      "path": "platform_app/raffle_image_storage.py",
+      "sha256": "75271d3a3637768ddd3b3056c45c2f5ec18e5100e2a5305767c54592b7b29db6"
+    },
+    {
+      "path": "platform_app/raffle_image_cleanup.py",
+      "sha256": "ff764864088dea8bacea4bfa4f3188dd38261d836148dacad1c3630ea92d4129"
+    },
+    {
+      "path": "platform_app/raffle_migration.py",
+      "sha256": "d34e0b85203591921a5e50e62b36dcaf07b739ace890bcb99c7aa6f40d71dfcf"
+    },
+    {
+      "path": "platform_app/raffle_schema.py",
+      "sha256": "7eecf1fca685d9dfb0c554cc0dd32fdd264e9cf570aa49aced4daff725e29187"
+    }
+  ],
+  "special_handling": {
+    "platform_app/__init__.py": "Adaptar preservando cookies, rutas y configuración del destino",
+    "central/plantillas/entidad_maestra.sqlite3": "Migrar y verificar, no sustituir sin validación",
+    "entidades/*/data/rifas.sqlite3": "Migrar individualmente con copia de seguridad"
+  },
+  "excluded": [
+    "platform_app/raffle_draw_finalize.py",
+    "platform_app/raffle_acta_pdf.py",
+    "central/plataforma.sqlite",
+    "central/secret.key",
+    "entidades",
+    "venv",
+    "staging",
+    "logs",
+    "__pycache__"
+  ],
+  "deployment_requirements": {
+    "preflight": true,
+    "backup": true,
+    "sqlite_integrity": true,
+    "safe_http_tests": true,
+    "rollback": true,
+    "explicit_production_authorization": true
+  }
+}

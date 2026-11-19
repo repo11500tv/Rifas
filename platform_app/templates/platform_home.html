@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rifas Benéficas</title>
+<style>
+body{font-family:Arial,sans-serif;background:#f4f6f8;color:#243044;margin:0}
+main{max-width:850px;margin:45px auto;padding:20px}
+header{text-align:center;margin-bottom:35px}
+h1{color:#17365a}
+.entity{background:white;border-radius:12px;padding:25px;margin:20px 0;
+box-shadow:0 2px 10px #00000010}
+.links{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+a.button{display:block;background:#17365a;color:white;padding:16px;
+text-align:center;text-decoration:none;border-radius:8px}
+a.admin{background:#52677e}
+@media(max-width:550px){.links{grid-template-columns:1fr}}
+footer{text-align:center;margin-top:35px;color:#667085}
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>Rifas Benéficas</h1>
+<p>Selecciona la entidad en la que deseas participar.</p>
+</header>
+{% for entity in entities %}
+<section class="entity">
+<h2>{{ entity['name'] }}</h2>
+<div class="links">
+<a class="button" href="{{ url_for('entity.home',slug=entity['slug']) }}">Acceder a la entidad</a>
+</div>
+</section>
+{% else %}
+<section class="entity">
+<p>No hay entidades activas disponibles.</p>
+</section>
+{% endfor %}
+<footer>Rifas Benéficas</footer>
+</main>
+</body>
+</html>
