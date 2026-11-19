@@ -105,6 +105,11 @@ class Hooks:
                 raise ValueError("El hook pertenece a otro entorno")
             if self.control_root is not None and os.environ.get("RIFAS_CONTROL_ROOT") != str(self.control_root):
                 raise ValueError("Directorio de control distinto del autorizado por el coordinador")
+            if self.unit is not None and (
+                os.environ.get("RIFAS_SYSTEMD_UNIT") != self.unit
+                or os.environ.get("RIFAS_PRIVATE_PORT") != str(urlsplit(self.settings["private_url"]).port)
+            ):
+                raise ValueError("Unidad o puerto distintos de los validados por el coordinador")
             self.check_scope(os.environ.get("RIFAS_DATA_ROOT", ""), os.environ.get("RIFAS_RELEASE_ROOT"))
 
     def status(self, url):

@@ -1,0 +1,11 @@
+# Modelo de drop-in. Completar y revisar antes de una intervención autorizada.
+[Service]
+User=STAGING_USER_PENDING
+Group=STAGING_GROUP_PENDING
+WorkingDirectory=/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231
+ProtectSystem=strict
+NoNewPrivileges=yes
+KillMode=control-group
+ReadWritePaths=
+ReadWritePaths=/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231/central /var/www/vhosts/dealfonso.com/rifas/staging/prueba_231/entidades
+InaccessiblePaths=-/var/www/vhosts/dealfonso.com/rifas/central -/var/www/vhosts/dealfonso.com/rifas/entidades -/var/www/vhosts/dealfonso.com/rifas/platform_app -/var/www/vhosts/dealfonso.com/rifas/wsgi.py -/var/www/vhosts/dealfonso.com/rifas/.rifas-deploy -/var/www/vhosts/dealfonso.com/rifas/ops-reviewed -/var/www/vhosts/dealfonso.com/sorteos -/srv/rifas-deploy/production

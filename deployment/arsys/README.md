@@ -199,3 +199,39 @@ escritores y entradas de publicación, el esquema y catálogo de las
 bases, el cierre de la barrera y la cobertura y recuperación del
 respaldo. Una inspección de lectura no sustituye un ensayo de parada o
 restauración autorizado.
+
+## Fase 2D — Inventario confirmado y revalidación
+
+El [inventario versionado](inventory.json) recoge los datos comunicados:
+producción usa 8767, staging 8768 y la aplicación excluida 8766. Los
+perfiles fijan los backends de Rifas 2.x en loopback. La publicación
+efectiva de staging, sus rutas alternativas y la recuperación externa
+siguen pendientes. Ambos servicios todavía comparten identidad.
+
+El perfil con guarda estructural vincula el digest revisado a la
+configuración efectiva de las unidades, sus drop-ins, rutas, permisos,
+ACL, montajes, identidades y archivos de revisión de proxy y políticas.
+Incluir los archivos efectivos y los directorios de includes por
+comodín en la revisión. Un archivo nuevo en un directorio revisado
+invalida su evidencia.
+Los PID y el estado de servicio se comprueban por separado, para que
+una parada normal no invalide el resultado. Cambios en la evidencia
+obligan a una revisión nueva.
+
+El coordinador verifica listener privado, unidad, UID y cgroup,
+visibilidad de escritores y ausencia de unidad, listener y escritores
+posterior al drenaje. Los hooks comprueban el cierre HTTP de las entradas
+declaradas. Los descriptores y mapas compartidos son una observación
+puntual; el sistema operativo y el control de los planificadores deben
+impedir escrituras nuevas durante el intervalo.
+
+Siguen vigentes la copia y su verificación, el catálogo y contrato SQLite,
+las pruebas de paquete y la reversión. El alta desde plantilla se prueba
+con datos sintéticos. Las sondas reales no crean entidades. La receta de
+Sorteos valida y respalda la base central y migra la plantilla y las bases
+de entidades. Una migración central exige un contrato específico.
+
+Ver el [procedimiento de la primera intervención](intervention.md). La
+intervención de infraestructura, la prueba de recuperación externa y
+cualquier ejecución real requieren autorización expresa. La solución
+propuesta utiliza el servidor y los servicios existentes.

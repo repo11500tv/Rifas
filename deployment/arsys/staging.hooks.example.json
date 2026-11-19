@@ -10,12 +10,12 @@
   "target": "/srv/rifas-deploy/staging/control/release.json",
   "closed_url": "PUBLIC_HEALTH_PENDING",
   "additional_closed_urls": [],
-  "private_url": "PRIVATE_HEALTH_PENDING",
+  "private_url": "http://127.0.0.1:8768/health",
   "gunicorn": {
     "python": "/srv/rifas-deploy/staging/venv/bin/python",
     "arguments": [
       "--bind",
-      "LOOPBACK_BIND_PENDING"
+      "127.0.0.1:8768"
     ],
     "environment": {
       "RIFAS_SESSION_COOKIE_NAME": "rifas_staging_session",

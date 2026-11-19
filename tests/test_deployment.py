@@ -14,9 +14,10 @@ import tempfile
 from threading import Thread
 from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
+from unittest.mock import Mock
 import unittest
 
-from deployment import approval, schema
+from deployment import approval, backup_integral, schema
 from deployment.artifact import build
 from deployment.deploy import Deployment
 from platform_app.raffle_schema import SCHEMA_RAFFLES
@@ -510,6 +511,50 @@ raise SystemExit(7)
         self.assertEqual((self.ops / "runtime.lock").read_text(), "runtime synthetic")
         self.assertEqual((self.baseline / "wsgi.py").read_bytes(), original_code)
         self.assertFalse((self.ops / "untracked").exists())
+
+    def test_structural_writer_guard_blocks_before_snapshot_or_migration(self):
+        structure = Mock()
+        structure.settings = {"unit": "synthetic.service"}
+        structure.port = 8768
+        structure.evidence.return_value = {"digest": "fixture"}
+
+        def writers(*, drained=False):
+            if drained:
+                raise ValueError("writer still open")
+            return 1
+
+        structure.writers.side_effect = writers
+        self.deployment.structure = structure
+        with self.assertRaisesRegex(ValueError, "writer still open"):
+            self.apply()
+        self.assertEqual(self.version(), "2.2.0")
+        self.assertEqual(self.deployment.active(), self.baseline)
+        self.assertFalse(self.deployment.pending.exists())
+        self.assertFalse(list((self.deployment.state / "runs").glob("*/backup")))
+        structure.service.assert_any_call(stopped=True)
+
+    def test_snapshot_recovers_empty_managed_scopes(self):
+        areas = ["ops"]
+        databases = schema.inventory(self.root, dry=True)
+        original_wsgi = (self.baseline / "wsgi.py").read_bytes()
+        self.assets.chmod(0o750)
+        snapshot = self.folder / "recovery-snapshot"
+        noop = lambda *_args, **_kwargs: None
+        fingerprint = backup_integral.capture(
+            self.root, self.baseline, areas, databases, snapshot, noop
+        )
+        for name in ("central", "entidades", "ops"):
+            shutil.rmtree(self.root / name)
+        shutil.rmtree(self.baseline)
+        backup_integral.restore(self.root, self.baseline, areas, databases, snapshot, fingerprint, noop)
+        self.assertEqual(schema.inventory(self.root, dry=True), databases)
+        self.assertEqual(self.version(), "2.2.0")
+        self.assertEqual((self.baseline / "wsgi.py").read_bytes(), original_wsgi)
+        self.assertEqual((self.assets / "photo.jpg").read_bytes(), b"synthetic media")
+        self.assertEqual(self.assets.stat().st_mode & 0o777, 0o750)
+        self.assertEqual((self.ops / "nginx.conf").read_text(), "proxy synthetic")
+        self.assertEqual((self.ops / "supervisor.ini").read_text(), "supervisor synthetic")
+        self.assertEqual((self.ops / "runtime.lock").read_text(), "runtime synthetic")
 
     def test_second_package_uses_different_contract_and_migration_without_coordinator_changes(self):
         clone = self.folder / "second-git"

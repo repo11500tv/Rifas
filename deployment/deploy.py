@@ -14,6 +14,7 @@ import sys
 from uuid import uuid4
 
 from deployment import approval, backup_integral as snapshot, schema
+from deployment.structure import Structure
 from deployment.artifact import IDENTITY, MANIFEST, NAMESPACE, SIGNATURE, digest, payload_path, platform_version, verify_signature
 from deployment.backup_sqlite import sha256
 from deployment.backup_integral import atomic_json, sync
@@ -108,6 +109,18 @@ class Deployment:
                    for path in self.protected)
         ):
             raise ValueError("Directorio de control solapado o inseguro")
+        self.structure = None
+        if self.name != "synthetic" and self.control_root is not None and "structure" not in config:
+            raise ValueError("Falta la configuración estructural del entorno gestionado")
+        if "structure" in config:
+            stable_profile = {key: value for key, value in config.items() if key != "structure"}
+            stable_profile["structure"] = {
+                key: value for key, value in config["structure"].items() if key != "expected_fingerprint"
+            }
+            self.structure = Structure(
+                config["structure"], self.root, self.state, self.protected,
+                self.backup_components, stable_profile, self.control_root,
+            )
         self.hooks = config["hooks"]
         self.checks = config["checks"]
         self.runtime_python = Path(config["runtime_python"])
@@ -200,6 +213,12 @@ class Deployment:
             process_env["RIFAS_CONTROL_ROOT"] = str(self.control_root)
         else:
             process_env.pop("RIFAS_CONTROL_ROOT", None)
+        if self.structure is not None:
+            process_env["RIFAS_SYSTEMD_UNIT"] = self.structure.settings["unit"]
+            process_env["RIFAS_PRIVATE_PORT"] = str(self.structure.port)
+        else:
+            process_env.pop("RIFAS_SYSTEMD_UNIT", None)
+            process_env.pop("RIFAS_PRIVATE_PORT", None)
         try:
             subprocess.run(command, cwd=(active or self.root) if label != "drain" else self.root, env=process_env, timeout=120, check=True)
         except (OSError, subprocess.SubprocessError) as error:
@@ -242,6 +261,7 @@ class Deployment:
         return manifest, fingerprint, databases, active, expected
 
     def plan(self, bundle):
+        evidence = self.check_operation()
         if self.pending.exists():
             raise ValueError("Hay una ejecución pendiente de recuperar")
         manifest, fingerprint, databases, _, _ = self.preflight(bundle, dry=True)
@@ -249,7 +269,17 @@ class Deployment:
                 "package": manifest["package"], "commit": manifest["commit"],
                 "databases": [str(path) for path in databases], "checks": manifest["checks"],
                 "backup_components": ["central", "entidades", *self.backup_components],
-                "installation": str(self.root)}
+                "installation": str(self.root), "structure": evidence}
+
+    def check_operation(self, *, drained=False):
+        if self.structure is None:
+            return None
+        evidence = self.structure.evidence()
+        self.structure.service(stopped=drained)
+        evidence["writers_observed"] = self.structure.writers(drained=drained)
+        if self.run is not None:
+            self.event("operation_checked", drained=drained, **evidence)
+        return evidence
 
     def status(self):
         if not self.pending.exists():
@@ -284,6 +314,8 @@ class Deployment:
 
     def finish(self, journal):
         active = self.active()
+        if active:
+            self.check_operation()
         try:
             self.hook("resume", self.hooks["resume"], active)
         except Exception as error:
@@ -304,6 +336,7 @@ class Deployment:
         self.check_scope(previous, journal["components"])
         self.hook("drain", self.hooks["drain"], previous)
         if phase == "changing":
+            self.check_operation(drained=True)
             snapshot.restore(
                 self.root, previous, journal["components"], [Path(path) for path in journal["databases"]],
                 self.state / "runs" / journal["run"] / "backup", journal["snapshot"], self.event,
@@ -313,6 +346,7 @@ class Deployment:
         self.hook("activate", self.hooks["activate"], previous)
         if previous:
             self.hook("ready", self.hooks["ready"], previous)
+            self.check_operation()
         self.checkpoint(journal, "rolled_back")
         self.finish(journal)
 
@@ -320,6 +354,8 @@ class Deployment:
         with self.lock():
             journal = json.loads(self.pending.read_text())
             grant = self.approve("recover", journal["digest"], approval, journal["run"])
+            if self.structure is not None:
+                self.structure.evidence()
             self.consume(grant)
             self.run = journal["run"]
             self.event("recovery_started", run=journal["run"], digest=journal["digest"])
@@ -353,6 +389,7 @@ class Deployment:
         with self.lock():
             if self.pending.exists():
                 raise ValueError("Recuperar la ejecución pendiente antes de aplicar")
+            self.check_operation()
             self.consume(grant)
             self.run = run = grant["run"]
             folder = self.state / "runs" / run
@@ -373,6 +410,7 @@ class Deployment:
             try:
                 self.hook("drain", self.hooks["drain"], previous)
                 self.check_scope(previous, self.backup_components)
+                self.check_operation(drained=True)
                 if schema.validate(
                     self.root, manifest["schema"], expected=expected,
                     target=manifest["migration"] is None,
@@ -390,6 +428,7 @@ class Deployment:
                 self.point_to(payload)
                 self.hook("activate", self.hooks["activate"], payload)
                 self.hook("ready", self.hooks["ready"], payload)
+                self.check_operation()
                 for check in manifest["checks"]:
                     self.hook(f"package:{check}", self.checks[check], payload)
             except Exception as error:
@@ -414,11 +453,16 @@ def main():
             command.add_argument("--approve", type=Path, required=True)
     commands.add_parser("recover").add_argument("--approve", type=Path, required=True)
     commands.add_parser("status")
+    commands.add_parser("structure")
     args = parser.parse_args()
     try:
         deployment = Deployment(json.loads(args.config.read_text()))
         if args.command == "plan":
             print(json.dumps(deployment.plan(args.artifact.resolve()), sort_keys=True))
+        elif args.command == "structure":
+            if deployment.structure is None:
+                raise ValueError("El perfil no define comprobaciones estructurales")
+            print(json.dumps(deployment.structure.evidence(review=True), sort_keys=True))
         elif args.command == "status":
             print(json.dumps(deployment.status(), sort_keys=True))
         elif args.command == "apply":

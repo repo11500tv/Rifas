@@ -35,7 +35,7 @@
       "/srv/rifas-deploy/staging/venv/bin/python",
       "/srv/rifas-deploy/coordinator/deployment/smoke.py",
       "--base",
-      "PRIVATE_BASE_PENDING",
+      "http://127.0.0.1:8768",
       "--version",
       "2.3.1",
       "--slug",
@@ -47,7 +47,7 @@
       "/srv/rifas-deploy/staging/venv/bin/python",
       "/srv/rifas-deploy/coordinator/deployment/smoke.py",
       "--base",
-      "PRIVATE_BASE_PENDING",
+      "http://127.0.0.1:8768",
       "--version",
       "2.3.1",
       "--slug",
@@ -58,5 +58,22 @@
       "MARKER_PENDING"
     ]
   },
-  "control_root": "/srv/rifas-deploy/staging/control"
+  "control_root": "/srv/rifas-deploy/staging/control",
+  "structure": {
+    "unit": "rifas-pruebas.service",
+    "peer_unit": "rifas-platform.service",
+    "port": 8768,
+    "working_directory": "/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231",
+    "writer_observer": [
+      "/srv/rifas-deploy/staging/bin/observe-writers"
+    ],
+    "writer_groups": [],
+    "review_files": [
+      "/srv/rifas-deploy/staging/deployment-hooks.json",
+      "/srv/rifas-deploy/staging/bin/hook",
+      "/srv/rifas-deploy/staging/bin/observe-writers",
+      "EFFECTIVE_PROXY_PATH_PENDING"
+    ],
+    "expected_fingerprint": "REVIEW_REQUIRED"
+  }
 }

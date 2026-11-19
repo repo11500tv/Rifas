@@ -78,7 +78,8 @@ class ArsysProfileTest(unittest.TestCase):
             profile["gunicorn"]["python"] = "/usr/bin/python3"
             hooks = Hooks(profile)
             good = {"RIFAS_DEPLOY_ENVIRONMENT": "staging", "RIFAS_DATA_ROOT": str(data),
-                    "RIFAS_RELEASE_ROOT": str(data), "RIFAS_CONTROL_ROOT": str(control_root)}
+                    "RIFAS_RELEASE_ROOT": str(data), "RIFAS_CONTROL_ROOT": str(control_root),
+                    "RIFAS_SYSTEMD_UNIT": "rifas-pruebas.service", "RIFAS_PRIVATE_PORT": "8766"}
             with patch.dict(os.environ, {**good, "RIFAS_DEPLOY_ENVIRONMENT": "production"}), \
                     patch("deployment.hooks.subprocess.run") as control:
                 with self.assertRaisesRegex(ValueError, "otro entorno"):
@@ -91,6 +92,11 @@ class ArsysProfileTest(unittest.TestCase):
             with patch.dict(os.environ, {**good, "RIFAS_CONTROL_ROOT": str(root)}), \
                     patch("deployment.hooks.subprocess.run") as control:
                 with self.assertRaisesRegex(ValueError, "Directorio de control"):
+                    hooks.drain()
+                control.assert_not_called()
+            with patch.dict(os.environ, {**good, "RIFAS_SYSTEMD_UNIT": "rifas-platform.service"}), \
+                    patch("deployment.hooks.subprocess.run") as control:
+                with self.assertRaisesRegex(ValueError, "Unidad o puerto"):
                     hooks.drain()
                 control.assert_not_called()
             with self.assertRaisesRegex(ValueError, "fuera del directorio"):

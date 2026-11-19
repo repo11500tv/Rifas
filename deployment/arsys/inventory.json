@@ -1,0 +1,47 @@
+{
+  "source": "Inspección de Arsys comunicada para fase 2D; sin consulta desde Codex",
+  "confirmed": {
+    "production": {
+      "root": "/var/www/vhosts/dealfonso.com/rifas",
+      "unit": "rifas-platform.service",
+      "port": 8767,
+      "active_at_inspection": true
+    },
+    "staging": {
+      "root": "/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231",
+      "unit": "rifas-pruebas.service",
+      "port": 8768,
+      "active_at_inspection": true
+    },
+    "legacy": {
+      "root": "/var/www/vhosts/dealfonso.com/sorteos",
+      "port": 8766,
+      "excluded": true
+    },
+    "current_identity": "shared_user_and_group",
+    "sqlite": "separate_by_environment"
+  },
+  "pending": [
+    "effective_staging_proxy_and_bypasses",
+    "operating_system_write_and_service_isolation",
+    "writer_and_scheduler_coverage",
+    "effective_sqlite_contract_and_catalog",
+    "complete_external_restore"
+  ],
+  "checked_each_operation": [
+    "paths_and_acl_metadata",
+    "unit_identity_and_confinement",
+    "private_listener_attributed_to_unit",
+    "writer_observer_visibility_and_scope",
+    "proxy_gate_through_hooks",
+    "snapshot_integrity",
+    "schema_and_package_tests"
+  ],
+  "invalidates_structural_evidence": [
+    "unit_or_dropins",
+    "proxy_and_included_review_files",
+    "identity_groups_permissions_acl_mounts",
+    "paths",
+    "profile_and_policy_files"
+  ]
+}
