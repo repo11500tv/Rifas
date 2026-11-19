@@ -31,3 +31,7 @@ venv/
 *.bak_*
 *.bak_paso*
 *.bak_panel*
+
+# Claves SSH locales de GitHub
+.github_rifas_ed25519
+.github_rifas_ed25519.pub
