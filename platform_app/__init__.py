@@ -5,7 +5,7 @@ from flask import Flask, request, redirect, url_for, session, render_template_st
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.environ.get('RIFAS_DATA_ROOT') or Path(__file__).resolve().parents[1]).resolve()
 DB = ROOT / 'central' / 'plataforma.sqlite'
 ENTITIES = ROOT / 'entidades'
 PLATFORM_VERSION = '2.3.1'
@@ -23,8 +23,22 @@ def create_app():
     if not secret_file.exists():
         raise RuntimeError('Falta central/secret.key; ejecutar init_platform.py')
     app.secret_key=secret_file.read_text().strip()
-    app.config.update(SESSION_COOKIE_NAME='rifas_produccion_session',SESSION_COOKIE_PATH='/rifas',SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SECURE=True,SESSION_COOKIE_SAMESITE='Lax',PERMANENT_SESSION_LIFETIME=7200,MAX_CONTENT_LENGTH=6*1024*1024)
-    app.wsgi_app=ProxyFix(app.wsgi_app,x_for=1,x_proto=1,x_host=1,x_prefix=1)
+    app.config.update(
+        SESSION_COOKIE_NAME=os.environ.get('RIFAS_SESSION_COOKIE_NAME', 'rifas_produccion_session'),
+        SESSION_COOKIE_PATH=os.environ.get('RIFAS_SESSION_COOKIE_PATH', '/rifas'),
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SECURE=True,
+        SESSION_COOKIE_SAMESITE='Lax',
+        PERMANENT_SESSION_LIFETIME=7200,
+        MAX_CONTENT_LENGTH=6 * 1024 * 1024,
+    )
+    proxy_headers = {
+        name: int(os.environ.get(f'RIFAS_PROXY_{name.upper()}', '1'))
+        for name in ('x_for', 'x_proto', 'x_host', 'x_prefix')
+    }
+    if any(count < 0 for count in proxy_headers.values()):
+        raise ValueError('Los saltos de proxy no pueden ser negativos')
+    app.wsgi_app = ProxyFix(app.wsgi_app, **proxy_headers)
     @app.before_request
     def check_session_inactivity():
         from datetime import datetime, timezone

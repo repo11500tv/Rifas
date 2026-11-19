@@ -1,449 +1,509 @@
-from pathlib import Path
+"""Coordinador de releases Rifas. Ejecutar con python -m deployment.deploy."""
+
 import argparse
-import hashlib
-import importlib.util
+from contextlib import contextmanager
+from datetime import datetime, timezone
+import fcntl
 import json
-import sqlite3
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
 import sys
+from uuid import uuid4
 
-STAGING = Path(
-    '/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231'
-)
-PRODUCTION = Path(
-    '/var/www/vhosts/dealfonso.com/rifas'
-)
+from deployment import approval, backup_integral as snapshot, schema
+from deployment.structure import Structure
+from deployment.intervention import Intervention
+from deployment.artifact import IDENTITY, MANIFEST, NAMESPACE, SIGNATURE, digest, payload_path, platform_version, verify_signature
+from deployment.backup_sqlite import sha256
+from deployment.backup_integral import atomic_json, sync
 
-REQUIRED_FILES = {
-    'platform_app/raffle_routes.py',
-    'platform_app/entity_routes.py',
-    'platform_app/participant_raffle_purchases.py',
-    'platform_app/raffle_image_storage.py',
-    'platform_app/raffle_image_cleanup.py',
-    'platform_app/raffle_migration.py',
-    'platform_app/raffle_schema.py',
-}
-
-def inspect_database(path):
-    if not path.is_file():
-        raise RuntimeError('Base de datos inexistente: ' + str(path))
-
-    with sqlite3.connect(
-        path.resolve().as_uri() + '?mode=ro',
-        uri=True
-    ) as con:
-        integrity = con.execute(
-            'PRAGMA integrity_check'
-        ).fetchone()[0]
-
-        if integrity != 'ok':
-            raise RuntimeError('SQLite no íntegra: ' + str(path))
-
-        columns = {
-            row[1] for row in con.execute(
-                'PRAGMA table_info(raffles)'
-            )
-        }
-
-        result = con.execute(
-            "SELECT version FROM module_versions "
-            "WHERE module='sorteos'"
-        ).fetchone()
-
-    version = result[0] if result else None
-
-    if version not in ('2.2.0', '2.4.0'):
-        raise RuntimeError(
-            'Versión de sorteos no prevista: ' + str(version)
-        )
-
-    updated = {'image_filename', 'extended_info'} <= columns
-
-    if version == '2.4.0' and not updated:
-        raise RuntimeError(
-            'Versión 2.4.0 sin columnas obligatorias'
-        )
-
-    return {'version': version, 'columns_ready': updated}
+HOOKS = {"drain", "activate", "ready", "resume"}
 
 
-def verify_manifest(source, manifest):
-    if manifest.get('package') != 'sorteos':
-        raise RuntimeError('Paquete incorrecto')
-
-    if manifest.get('module_version') != '2.4.0':
-        raise RuntimeError('Versión objetivo incorrecta')
-
-    if manifest.get('status') != 'preparation':
-        raise RuntimeError('Estado de manifiesto inesperado')
-
-    files = manifest.get('files')
-
-    if not isinstance(files, list):
-        raise RuntimeError('Archivos de manifiesto incorrectos')
-
-    paths = {item['path'] for item in files}
-
-    if paths != REQUIRED_FILES or len(files) != len(REQUIRED_FILES):
-        raise RuntimeError('Archivos autorizados no coinciden')
-
-    for item in files:
-        relative = item['path']
-        path = (source / relative).resolve()
-
-        if not path.is_relative_to(source):
-            raise RuntimeError('Ruta fuera de staging')
-
-        if not path.is_file():
-            raise RuntimeError('Archivo ausente: ' + relative)
-
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-
-        if digest != item['sha256']:
-            raise RuntimeError('SHA-256 incorrecto: ' + relative)
-
-        if path.suffix == '.py':
-            compile(path.read_bytes(), str(path), 'exec')
-
-    return len(files)
+def signing_keys(path):
+    keys = set(re.findall(r"(?m)^[^#\n][^\n]*?\bssh-ed25519\s+([A-Za-z0-9+/=]+)(?=\s|$)",
+                          path.read_text()))
+    if not keys:
+        raise ValueError(f"No hay claves Ed25519 en {path.name}")
+    return keys
 
 
-
-def backup_restore_test():
-    import tempfile
-    import importlib.util
-
-    module_path = STAGING / 'deployment/backup_sqlite.py'
-
-    spec = importlib.util.spec_from_file_location(
-        'rifas_backup_sqlite', module_path
+def validate_artifact(bundle, trusted_signers):
+    raw = verify_signature(bundle / MANIFEST, bundle / SIGNATURE, trusted_signers, IDENTITY, NAMESPACE)
+    manifest = json.loads(raw)
+    if set(manifest) != {"format", "package", "version", "commit", "recipe", "files",
+                         "platform_from", "platform_to", "schema", "migration", "checks"} or manifest["format"] != 2:
+        raise ValueError("Formato de manifiesto incompatible")
+    version = r"[0-9]+\.[0-9]+\.[0-9]+"
+    if (not re.fullmatch(r"[a-f0-9]{40}", manifest["commit"])
+            or not re.fullmatch(r"[a-z][a-z0-9_-]*", manifest["package"])
+            or not re.fullmatch(r"deployment/packages/[a-zA-Z0-9_.-]+\.json", manifest["recipe"])
+            or not re.fullmatch(version, manifest["version"])
+            or not re.fullmatch(version, manifest["platform_to"])
+            or not isinstance(manifest["platform_from"], list) or not manifest["platform_from"]
+            or any(item is not None and not re.fullmatch(version, item) for item in manifest["platform_from"])
+            or not isinstance(manifest["checks"], list) or not manifest["checks"]
+            or len(set(manifest["checks"])) != len(manifest["checks"])):
+        raise ValueError("Metadatos de paquete incompatibles")
+    payload = bundle / "payload"
+    if payload.is_symlink() or not payload.is_dir():
+        raise ValueError("Payload inválido")
+    files = manifest["files"]
+    required = {"wsgi.py", "platform_app/__init__.py"} | schema.referenced_files(
+        manifest["schema"], manifest["migration"]
     )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    print('===== PRUEBA AUTOMATICA DE RESPALDO Y RESTAURACION =====')
-
-    with tempfile.TemporaryDirectory(prefix='rifas_backup_test_') as tmp:
-        folder = Path(tmp)
-        original_db = folder / 'original.sqlite3'
-        backup_db = folder / 'respaldo.sqlite3'
-        restored_db = folder / 'restaurada.sqlite3'
-
-        with sqlite3.connect(original_db) as con:
-            con.execute(
-                'CREATE TABLE prueba (id INTEGER PRIMARY KEY, valor TEXT)'
-            )
-            con.execute(
-                "INSERT INTO prueba(valor) VALUES ('dato_original')"
-            )
-
-        record = module.backup_database(original_db, backup_db)
-
-        if not module.verify_sqlite(backup_db):
-            raise RuntimeError('Copia no íntegra')
-
-        if module.sha256(backup_db) != record['sha256']:
-            raise RuntimeError('Huella de respaldo incorrecta')
-
-        with sqlite3.connect(original_db) as con:
-            con.execute(
-                "UPDATE prueba SET valor='dato_modificado'"
-            )
-
-        with sqlite3.connect(
-            backup_db.resolve().as_uri() + '?mode=ro',
-            uri=True
-        ) as source:
-            with sqlite3.connect(restored_db) as destination:
-                source.backup(destination)
-
-        module.verify_sqlite(restored_db)
-
-        with sqlite3.connect(restored_db) as con:
-            value = con.execute(
-                'SELECT valor FROM prueba WHERE id=1'
-            ).fetchone()[0]
-
-        if value != 'dato_original':
-            raise RuntimeError('Restauración incorrecta')
-
-        print('COPIA SQLITE: OK')
-        print('INTEGRIDAD: OK')
-        print('SHA-256: OK')
-        print('RESTAURACION: OK')
-        print('DATO ORIGINAL RECUPERADO:', value)
-        print('BASES REALES: SIN MODIFICAR')
-        print('RESULTADO: PRUEBA DE RESPALDO SUPERADA')
+    if not isinstance(files, dict) or not required <= files.keys():
+        raise ValueError("Faltan archivos obligatorios")
+    observed = set()
+    for path in payload.rglob("*"):
+        if path.is_symlink() or not (path.is_file() or path.is_dir()):
+            raise ValueError(f"Entrada irregular en el artefacto: {path.name}")
+        if path.is_file():
+            observed.add(path.relative_to(payload).as_posix())
+    if observed != files.keys():
+        raise ValueError("El inventario del artefacto no coincide")
+    for name, expected in files.items():
+        path = payload / payload_path(name)
+        if not re.fullmatch(r"[a-f0-9]{64}", expected) or sha256(path) != expected:
+            raise ValueError(f"SHA-256 incorrecto: {name}")
+        if path.suffix == ".py":
+            compile(path.read_bytes(), str(path), "exec")
+    if platform_version((payload / "platform_app/__init__.py").read_bytes()) != manifest["platform_to"]:
+        raise ValueError("Versión de código incompatible")
+    return manifest, digest(raw)
 
 
-def integral_backup_test():
-    import tempfile
-    import shutil
-
-    sys.path.insert(0, str(STAGING / 'deployment'))
-    from backup_integral import create_backup, verify_backup
-
-    print('===== PRUEBA INTEGRAL AUTOMATIZADA =====')
-
-    with tempfile.TemporaryDirectory(prefix='rifas_integral_') as temp:
-        base = Path(temp)
-        source = base / 'instalacion'
-        backup = base / 'respaldo'
-        restored = base / 'restaurada'
-
-        for relative in (
-            'central/plantillas',
-            'platform_app',
-            'entidades/demostracion/data',
-            'entidades/demostracion/config',
-            'entidades/demostracion/uploads/sorteos',
+class Deployment:
+    def __init__(self, config):
+        self.config = config
+        self.name = config["environment"]
+        if self.name not in {"synthetic", "staging", "production"}:
+            raise ValueError("Entorno desconocido")
+        self.root = Path(config["data_root"]).resolve(strict=True)
+        self.state = self.root / ".rifas-deploy"
+        self.signers = Path(config["allowed_signers"]).resolve(strict=True)
+        self.approvers = Path(config["approval_signers"]).resolve(strict=True)
+        self.backup_components = config["backup_components"]
+        if not isinstance(self.backup_components, list):
+            raise ValueError("backup_components debe ser una lista de rutas gestionadas")
+        if (self.root.is_relative_to("/root") or self.root == Path("/") or not self.root.is_dir()
+                or not self.signers.is_file() or not self.approvers.is_file() or self.state.is_symlink()):
+            raise ValueError("Rutas de instalación no admitidas")
+        if signing_keys(self.approvers) & signing_keys(self.signers):
+            raise ValueError("La confianza de aprobación debe ser independiente de la firma de releases")
+        protected = config.get("protected_paths", [])
+        if not isinstance(protected, list):
+            raise ValueError("protected_paths debe ser una lista de rutas absolutas")
+        self.protected = tuple(Path(path) for path in protected)
+        for path in self.protected:
+            if not path.is_absolute() or path.resolve() != path:
+                raise ValueError(f"Ruta protegida no canónica: {path}")
+        self.control_root = Path(config["control_root"]) if "control_root" in config else None
+        if self.control_root is not None and (
+            not self.control_root.is_absolute() or self.control_root.resolve() != self.control_root
+            or self.control_root == Path("/") or self.control_root.is_relative_to("/root")
+            or self.control_root.is_relative_to(self.root) or self.root.is_relative_to(self.control_root)
+            or any(self.control_root.is_relative_to(path) or path.is_relative_to(self.control_root)
+                   for path in self.protected)
         ):
-            (source / relative).mkdir(parents=True, exist_ok=True)
+            raise ValueError("Directorio de control solapado o inseguro")
+        self.structure = None
+        if self.name != "synthetic" and self.control_root is not None and "structure" not in config:
+            raise ValueError("Falta la configuración estructural del entorno gestionado")
+        if "structure" in config:
+            stable_profile = {key: value for key, value in config.items() if key != "structure"}
+            stable_profile["structure"] = {
+                key: value for key, value in config["structure"].items() if key != "expected_fingerprint"
+            }
+            self.structure = Structure(
+                config["structure"], self.root, self.state, self.protected,
+                self.backup_components, stable_profile, self.control_root,
+            )
+        self.hooks = config["hooks"]
+        self.checks = config["checks"]
+        self.runtime_python = Path(config["runtime_python"])
+        if not self.runtime_python.is_absolute() or not os.access(self.runtime_python, os.X_OK):
+            raise ValueError("El intérprete runtime_python debe ser absoluto y ejecutable")
+        self.baseline = None
+        if config.get("baseline"):
+            self.baseline = Path(config["baseline"]).resolve(strict=True)
+            if self.baseline.is_relative_to("/root") or self.baseline.is_relative_to(self.state):
+                raise ValueError("Ruta de versión anterior no admitida")
+        if set(self.hooks) != HOOKS:
+            raise ValueError("Se requieren drain, activate, ready y resume")
+        for command in (*self.hooks.values(), *self.checks.values()):
+            if (not isinstance(command, list) or not command
+                    or any(not isinstance(item, str) for item in command)
+                    or not Path(command[0]).is_absolute() or not os.access(command[0], os.X_OK)):
+                raise ValueError("Los hooks requieren argv con ejecutable absoluto")
+        self.check_scope(self.baseline, self.backup_components)
+        marker = self.state / "environment"
+        if marker.is_symlink() or not marker.is_file() or marker.read_text().strip() != self.name:
+            raise ValueError("La raíz no está registrada para el entorno de la configuración")
+        self.pending = self.state / "pending.json"
+        self.current = self.state / "current"
+        self.run = None
 
-        databases = (
-            'central/plataforma.sqlite',
-            'central/plantillas/entidad_maestra.sqlite3',
-            'entidades/demostracion/data/rifas.sqlite3',
-        )
+    def check_scope(self, previous, components):
+        scopes = snapshot.roots(self.root, previous, components)
+        paths = [self.state]
+        for name in ("lock", "events.jsonl", "pending.json", "runs", "used-approvals", "intervention.json", "interventions"):
+            path = self.state / name
+            if path.is_symlink() or (path.is_file() and path.stat().st_nlink != 1):
+                raise ValueError(f"Estado del coordinador compartido o inseguro: {path}")
+        for base, relatives in scopes.values():
+            paths.extend(base / relative for relative in relatives)
+        for path in paths:
+            if path.resolve() != path:
+                raise ValueError(f"Ruta gestionada no canónica: {path}")
+            if any(path.is_relative_to(protected) or protected.is_relative_to(path)
+                   for protected in self.protected):
+                raise ValueError(f"Ruta gestionada solapada con otro ámbito: {path}")
 
-        for relative in databases:
-            with sqlite3.connect(source / relative) as con:
-                con.execute(
-                    'CREATE TABLE prueba(id INTEGER PRIMARY KEY, valor TEXT)'
-                )
-                con.execute(
-                    "INSERT INTO prueba(valor) VALUES ('original')"
-                )
+    def event(self, phase, **details):
+        record = {"at": datetime.now(timezone.utc).isoformat(), "environment": self.name,
+                  "phase": phase, "run": self.run, **details}
+        with (self.state / "events.jsonl").open("a") as log:
+            log.write(json.dumps(record, sort_keys=True) + "\n")
+            log.flush()
+            os.fsync(log.fileno())
 
-        (source / 'platform_app/__init__.py').write_text(
-            'def create_app(): pass\n', encoding='utf-8'
-        )
-        (source / 'wsgi.py').write_text(
-            'from platform_app import create_app\n', encoding='utf-8'
-        )
-        (source / 'entidades/demostracion/config/entity.json').write_text(
-            '{"entidad":"demostracion"}', encoding='utf-8'
-        )
+    @contextmanager
+    def lock(self):
+        self.check_scope(self.baseline, self.backup_components)
+        if (not self.state.is_dir() or self.state.stat().st_uid != os.geteuid()
+                or self.state.stat().st_mode & 0o077):
+            raise ValueError("Preaprovisionar .rifas-deploy con propietario operativo y modo 0700")
+        with (self.state / "lock").open("a") as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RuntimeError("Otro despliegue tiene el bloqueo") from None
+            yield
 
-        photo = (
-            source /
-            'entidades/demostracion/uploads/sorteos/premio.jpg'
-        )
-        photo.write_bytes(b'FOTO_ORIGINAL')
+    def active(self):
+        if self.current.is_symlink():
+            target = self.current.resolve(strict=True)
+            if (target.parent.parent.parent != self.state or target.parent.parent.name != "runs"
+                    or target.name != "payload"):
+                raise ValueError("Puntero de release fuera del inventario")
+            return target
+        if self.current.exists():
+            raise ValueError("El puntero current debe ser simbólico")
+        return self.baseline
 
-        inventory = create_backup(source, backup)
-        assert verify_backup(backup)
-
-        print('ARCHIVOS RESPALDADOS:', len(inventory['files']))
-        print('INTEGRIDAD: OK')
-
-        copied_photo = (
-            backup /
-            'entidades/demostracion/uploads/sorteos/premio.jpg'
-        )
-        copied_photo.write_bytes(b'FOTO_ALTERADA')
-
-        try:
-            verify_backup(backup)
-        except RuntimeError:
-            print('ALTERACION DETECTADA: OK')
+    def point_to(self, target):
+        if target is None or target == self.baseline:
+            self.current.unlink(missing_ok=True)
         else:
-            raise RuntimeError('No se detectó la alteración')
+            temporary = self.state / f".current-{uuid4().hex}"
+            temporary.symlink_to(target)
+            os.replace(temporary, self.current)
+        sync(self.state)
 
-        copied_photo.write_bytes(b'FOTO_ORIGINAL')
-        assert verify_backup(backup)
+    def hook(self, label, command, active):
+        self.event("hook_started", hook=label)
+        process_env = {**os.environ, "RIFAS_DATA_ROOT": str(self.root),
+                       "RIFAS_DEPLOY_ENVIRONMENT": self.name,
+                       "RIFAS_RELEASE_ROOT": str(active) if active else "",
+                       "PYTHONDONTWRITEBYTECODE": "1"}
+        if self.control_root is not None:
+            process_env["RIFAS_CONTROL_ROOT"] = str(self.control_root)
+        else:
+            process_env.pop("RIFAS_CONTROL_ROOT", None)
+        if self.structure is not None:
+            process_env["RIFAS_SYSTEMD_UNIT"] = self.structure.settings["unit"]
+            process_env["RIFAS_PRIVATE_PORT"] = str(self.structure.port)
+        else:
+            process_env.pop("RIFAS_SYSTEMD_UNIT", None)
+            process_env.pop("RIFAS_PRIVATE_PORT", None)
+        try:
+            subprocess.run(command, cwd=(active or self.root) if label != "drain" else self.root, env=process_env, timeout=120, check=True)
+        except (OSError, subprocess.SubprocessError) as error:
+            self.event("hook_failed", hook=label, error=type(error).__name__,
+                       returncode=getattr(error, "returncode", None))
+            raise
+        self.event("hook_passed", hook=label)
 
-        shutil.copytree(backup, restored)
-        assert verify_backup(restored)
+    def preflight(self, bundle, *, dry):
+        manifest, fingerprint = validate_artifact(bundle, self.signers)
+        active = self.active()
+        self.check_scope(active, self.backup_components)
+        prior = platform_version((active / "platform_app/__init__.py").read_bytes()) if active else None
+        if prior not in manifest["platform_from"]:
+            raise ValueError(f"Versión de plataforma de origen incompatible: {prior}")
+        if not set(manifest["checks"]) <= self.checks.keys():
+            raise ValueError("Faltan pruebas funcionales declaradas")
+        subprocess.run(
+            [str(self.runtime_python), "-I", "-B", "-c",
+             "import flask, werkzeug, PIL.Image, reportlab, cryptography.fernet, gunicorn"],
+            timeout=30, check=True,
+        )
+        expected = schema.expected_schema(bundle / "payload", manifest["schema"])
+        databases = schema.validate(
+            self.root, manifest["schema"], expected=expected,
+            target=manifest["migration"] is None, dry=dry,
+        )
+        payload_size = sum((bundle / "payload" / name).stat().st_size for name in manifest["files"])
+        database_size = sum(
+            file.stat().st_size for relative in databases
+            for file in (self.root / relative, self.root / (str(relative) + "-wal"))
+            if file.is_file()
+        )
+        managed = snapshot.inventory(self.root, active, self.backup_components, databases)
+        managed_size = sum(item["size"] for item in managed
+                           if item["kind"] != "directory" and
+                           (item["group"] != "data" or Path(item["path"]) not in databases))
+        if shutil.disk_usage(self.state if self.state.is_dir() else self.root).free < payload_size + managed_size + 2 * database_size:
+            raise ValueError("Espacio insuficiente para release y respaldo SQLite")
+        return manifest, fingerprint, databases, active, expected
 
-        for relative in databases:
-            with sqlite3.connect(restored / relative) as con:
-                value = con.execute(
-                    'SELECT valor FROM prueba'
-                ).fetchone()[0]
-                assert value == 'original'
+    def ensure_no_intervention(self):
+        path = self.state / "intervention.json"
+        if path.exists() or path.is_symlink():
+            raise ValueError("Hay una intervención de infraestructura pendiente")
 
-        print('RESTAURACION SQLITE: OK')
-        print('RESTAURACION ARCHIVOS: OK')
+    def plan(self, bundle):
+        self.ensure_no_intervention()
+        evidence = self.check_operation()
+        if self.pending.exists():
+            raise ValueError("Hay una ejecución pendiente de recuperar")
+        manifest, fingerprint, databases, _, _ = self.preflight(bundle, dry=True)
+        return {"environment": self.name, "mode": "read-only", "digest": fingerprint,
+                "package": manifest["package"], "commit": manifest["commit"],
+                "databases": [str(path) for path in databases], "checks": manifest["checks"],
+                "backup_components": ["central", "entidades", *self.backup_components],
+                "installation": str(self.root), "structure": evidence}
 
-    print('DIRECTORIOS TEMPORALES: ELIMINADOS')
-    print('BASES REALES: SIN MODIFICAR')
-    print('RESULTADO: PRUEBA INTEGRAL SUPERADA')
+    def check_operation(self, *, drained=False):
+        if self.structure is None:
+            return None
+        evidence = self.structure.evidence()
+        self.structure.service(stopped=drained)
+        evidence["writers_observed"] = self.structure.writers(drained=drained)
+        if self.run is not None:
+            self.event("operation_checked", drained=drained, **evidence)
+        return evidence
+
+    def status(self):
+        intervention = self.state / "intervention.json"
+        if intervention.is_symlink():
+            raise ValueError("Estado de intervención inseguro")
+        if intervention.is_file():
+            journal = json.loads(intervention.read_text())
+            return {"environment": self.name, "installation": str(self.root), "intervention": {
+                key: journal[key] for key in ("run", "digest", "phase", "publication") if key in journal
+            }}
+        if not self.pending.exists():
+            return {"environment": self.name, "installation": str(self.root), "pending": None}
+        journal = json.loads(self.pending.read_text())
+        return {"environment": self.name, "installation": str(self.root), "pending": {
+            key: journal[key] for key in ("run", "digest", "phase")
+        }}
+
+    def approve(self, operation, fingerprint, document, run=None):
+        signers = self.approvers
+        if operation in {"intervene", "recover-intervention"}:
+            if not self.config.get("intervention_signers"):
+                raise ValueError("Faltan las claves independientes de intervención")
+            signers = Path(self.config["intervention_signers"]).resolve(strict=True)
+            if signing_keys(signers) & (signing_keys(self.approvers) | signing_keys(self.signers)):
+                raise ValueError("La autorización de intervención debe ser independiente")
+        return approval.verified(document, signers, operation, self.name, self.root, fingerprint, run)
+
+    def consume(self, grant):
+        receipts = self.state / "used-approvals"
+        receipts.mkdir(mode=0o700, exist_ok=True)
+        try:
+            with (receipts / grant["nonce"]).open("x") as receipt:
+                json.dump(grant, receipt, sort_keys=True)
+                receipt.flush()
+                os.fsync(receipt.fileno())
+        except FileExistsError:
+            raise ValueError("Aprobación ya utilizada") from None
+        sync(receipts)
+        sync(self.state)
+
+    def checkpoint(self, journal, phase):
+        journal["phase"] = phase
+        atomic_json(self.pending, journal)
+        self.event(phase, run=journal["run"], digest=journal["digest"])
+
+    def finish(self, journal):
+        active = self.active()
+        if active:
+            self.check_operation()
+        try:
+            self.hook("resume", self.hooks["resume"], active)
+        except Exception as error:
+            self.event("resume_failed", run=journal["run"], error=type(error).__name__)
+            raise
+        self.event("finished", run=journal["run"], outcome=journal["phase"])
+        self.pending.unlink()
+        sync(self.state)
+
+    def recover_pending(self, journal):
+        phase = journal["phase"]
+        if phase in {"committed", "rolled_back"}:
+            self.finish(journal)
+            return
+        if phase not in {"draining", "backed_up", "changing"}:
+            raise ValueError("Fase de recuperación desconocida")
+        previous = Path(journal["previous"]) if journal["previous"] else None
+        self.check_scope(previous, journal["components"])
+        self.hook("drain", self.hooks["drain"], previous)
+        if phase == "changing":
+            self.check_operation(drained=True)
+            snapshot.restore(
+                self.root, previous, journal["components"], [Path(path) for path in journal["databases"]],
+                self.state / "runs" / journal["run"] / "backup", journal["snapshot"], self.event,
+            )
+            schema.validate(self.root, journal["schema"])
+        self.point_to(previous)
+        self.hook("activate", self.hooks["activate"], previous)
+        if previous:
+            self.hook("ready", self.hooks["ready"], previous)
+            self.check_operation()
+        self.checkpoint(journal, "rolled_back")
+        self.finish(journal)
+
+    def recover(self, approval):
+        with self.lock():
+            self.ensure_no_intervention()
+            journal = json.loads(self.pending.read_text())
+            grant = self.approve("recover", journal["digest"], approval, journal["run"])
+            if self.structure is not None:
+                self.structure.evidence()
+            self.consume(grant)
+            self.run = journal["run"]
+            self.event("recovery_started", run=journal["run"], digest=journal["digest"])
+            try:
+                self.recover_pending(journal)
+            except Exception as error:
+                self.event("recovery_failed", run=journal["run"], error=type(error).__name__)
+                raise
+
+    def stage(self, bundle, original, fingerprint, folder):
+        for name in (MANIFEST, SIGNATURE, *(f"payload/{name}" for name in original["files"])):
+            destination = folder / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(bundle / name, destination, follow_symlinks=False)
+        manifest, actual, paths, previous, expected = self.preflight(folder, dry=False)
+        if actual != fingerprint:
+            raise ValueError("El artefacto cambió durante la preparación")
+        payload = folder / "payload"
+        for directory, _, names in os.walk(folder, topdown=False):
+            for name in names:
+                sync(Path(directory) / name)
+            sync(Path(directory))
+        sync(folder.parent)
+        sync(self.state)
+        return manifest, paths, previous, expected, payload
+
+    def apply(self, bundle, approval):
+        # Verificar el paquete antes de crear estado y volver a verificar la copia privada.
+        original, fingerprint = validate_artifact(bundle, self.signers)
+        grant = self.approve("apply", fingerprint, approval)
+        with self.lock():
+            self.ensure_no_intervention()
+            if self.pending.exists():
+                raise ValueError("Recuperar la ejecución pendiente antes de aplicar")
+            self.check_operation()
+            self.consume(grant)
+            self.run = run = grant["run"]
+            folder = self.state / "runs" / run
+            folder.mkdir(parents=True, mode=0o700)
+            self.event("approved", run=run, digest=fingerprint, commit=original["commit"])
+            try:
+                manifest, paths, previous, expected, payload = self.stage(
+                    bundle, original, fingerprint, folder
+                )
+            except Exception as error:
+                self.event("preflight_failed", run=run, error=type(error).__name__)
+                raise
+            self.event("preflight_passed", run=run, databases=len(paths))
+            journal = {"run": run, "digest": fingerprint, "previous": str(previous) if previous else None,
+                       "schema": manifest["schema"], "components": self.backup_components,
+                       "databases": [str(path) for path in paths]}
+            self.checkpoint(journal, "draining")
+            try:
+                self.hook("drain", self.hooks["drain"], previous)
+                self.check_scope(previous, self.backup_components)
+                self.check_operation(drained=True)
+                if schema.validate(
+                    self.root, manifest["schema"], expected=expected,
+                    target=manifest["migration"] is None,
+                ) != paths:
+                    raise ValueError("El inventario cambió durante el drenaje")
+                journal["snapshot"] = snapshot.capture(
+                    self.root, previous, self.backup_components, paths, folder / "backup", self.event
+                )
+                snapshot.verify(folder / "backup", journal["snapshot"])
+                self.checkpoint(journal, "backed_up")
+                self.checkpoint(journal, "changing")
+                schema.migrate(self.root, paths, manifest["schema"], manifest["migration"], payload, self.event)
+                if schema.validate(self.root, manifest["schema"], expected=expected, target=True) != paths:
+                    raise ValueError("El inventario cambió durante la migración")
+                self.point_to(payload)
+                self.hook("activate", self.hooks["activate"], payload)
+                self.hook("ready", self.hooks["ready"], payload)
+                self.check_operation()
+                for check in manifest["checks"]:
+                    self.hook(f"package:{check}", self.checks[check], payload)
+            except Exception as error:
+                try:
+                    self.event("failed", run=run, error=type(error).__name__)
+                finally:
+                    self.recover_pending(json.loads(self.pending.read_text()))
+                raise
+            self.checkpoint(journal, "committed")
+            self.finish(journal)
+            return fingerprint
+
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '--environment',
-        choices=('staging', 'production'),
-        required=True
-    )
-    parser.add_argument('--backup-test', action='store_true')
-    parser.add_argument('--integral-test', action='store_true')
-    parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        required=False
-    )
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, required=True)
+    commands = parser.add_subparsers(dest="command", required=True)
+    for action in ("plan", "apply"):
+        command = commands.add_parser(action)
+        command.add_argument("--artifact", type=Path, required=True)
+        if action == "apply":
+            command.add_argument("--approve", type=Path, required=True)
+    commands.add_parser("recover").add_argument("--approve", type=Path, required=True)
+    commands.add_parser("status")
+    commands.add_parser("structure")
+    for action in ("intervene", "recover-intervention"):
+        command = commands.add_parser(action)
+        command.add_argument("--recipe", type=Path, required=True)
+        command.add_argument("--approve", type=Path, required=True)
     args = parser.parse_args()
-    if args.integral_test:
-        integral_backup_test()
-        return
-    if args.backup_test:
-        backup_restore_test()
-        return
-    if not args.dry_run:
-        raise RuntimeError('Solo se permite --dry-run')
-
-    source = STAGING.resolve()
-    target = (
-        STAGING if args.environment == 'staging'
-        else PRODUCTION
-    ).resolve()
-
-    print('===== DESPLIEGUE UNIFICADO: SIMULACION =====')
-    print('ORIGEN:', source)
-    print('DESTINO:', target)
-    print('MODO: SOLO LECTURA')
-
-    manifest_path = (
-        source / 'deployment/sorteos_2.4.0.json'
-    )
-    manifest = json.loads(
-        manifest_path.read_text(encoding='utf-8')
-    )
-
-    print('\n--- PAQUETE ---')
-    count = verify_manifest(source, manifest)
-    print('ARCHIVOS VERIFICADOS:', count)
-
-    print('\n--- BASE CENTRAL ---')
-    central = target / 'central/plataforma.sqlite'
-
-    if not central.is_file():
-        raise RuntimeError('Base central inexistente')
-
-    with sqlite3.connect(
-        central.resolve().as_uri() + '?mode=ro',
-        uri=True
-    ) as con:
-        integrity = con.execute(
-            'PRAGMA integrity_check'
-        ).fetchone()[0]
-
-    if integrity != 'ok':
-        raise RuntimeError('Base central no íntegra')
-
-    print('INTEGRIDAD: OK')
-
-    print('\n--- PLANTILLA MAESTRA ---')
-    template = (
-        target / 'central/plantillas/entidad_maestra.sqlite3'
-    )
-    template_info = inspect_database(template)
-    print('VERSION:', template_info['version'])
-    print('COLUMNAS 2.4.0:', template_info['columns_ready'])
-
-    print('\n--- ENTIDADES ---')
-    entities = target / 'entidades'
-
-    if not entities.is_dir():
-        raise RuntimeError('Directorio de entidades inexistente')
-
-    count_entities = 0
-
-    for folder in sorted(entities.iterdir()):
-        if not folder.is_dir():
-            continue
-
-        database = folder / 'data/rifas.sqlite3'
-
-        if not database.is_file():
-            continue
-
-        info = inspect_database(database)
-
-        print(
-            folder.name,
-            '| version:', info['version'],
-            '| migracion:',
-            'NO NECESARIA' if (
-                info['version'] == '2.4.0'
-                and info['columns_ready']
-            ) else 'NECESARIA'
-        )
-
-        count_entities += 1
-
-    if count_entities == 0:
-        raise RuntimeError('No hay entidades verificables')
-
-
-
-    print('\n--- INVENTARIO DE RESPALDO ---')
-
-    mandatory = [
-        target / 'central/plataforma.sqlite',
-        target / 'central/plantillas/entidad_maestra.sqlite3',
-        target / 'platform_app',
-        target / 'wsgi.py',
-    ]
-
-    optional = []
-
-    for folder in sorted(entities.iterdir()):
-        if not folder.is_dir():
-            continue
-
-        database = folder / 'data/rifas.sqlite3'
-        if not database.is_file():
-            continue
-
-        mandatory.append(database)
-        optional.extend([
-            folder / 'config',
-            folder / 'uploads',
-        ])
-
-    missing = [p for p in mandatory if not p.exists()]
-    if missing:
-        raise RuntimeError(
-            'Elementos obligatorios ausentes: ' +
-            ', '.join(str(p) for p in missing)
-        )
-
-    for path in mandatory:
-        kind = 'DIRECTORIO' if path.is_dir() else 'ARCHIVO'
-        print('OBLIGATORIO', kind + ':', path.relative_to(target))
-
-    for path in optional:
-        if path.exists():
-            kind = 'DIRECTORIO' if path.is_dir() else 'ARCHIVO'
-            print('OPCIONAL', kind + ':', path.relative_to(target))
-        else:
-            print('OPCIONAL AUSENTE:', path.relative_to(target))
-
-    print('ELEMENTOS OBLIGATORIOS:', len(mandatory))
-    print('ELEMENTOS OPCIONALES:', len(optional))
-    print('RESPALDO REAL: PENDIENTE DE IMPLEMENTACION')
-
-    print('\n--- PLAN ---')
-    print('ENTIDADES:', count_entities)
-    print('COPIAS SQLITE: OBLIGATORIAS EN DESPLIEGUE REAL')
-    print('COPIAS DE CODIGO Y FOTOS: OBLIGATORIAS')
-    print('MIGRACIONES: SEGUN VERSION')
-    print('VALIDACION POSTERIOR: OBLIGATORIA')
-    print('REVERSIÓN: OBLIGATORIA')
-    print('DESPLIEGUE REAL: TODAVIA NO HABILITADO')
-
-    print('\nARCHIVOS MODIFICADOS: NINGUNO')
-    print('BASES MODIFICADAS: NINGUNA')
-    print('SERVICIOS REINICIADOS: NINGUNO')
-    print('RESULTADO: SIMULACION SUPERADA')
-
-
-if __name__ == '__main__':
     try:
-        main()
-    except Exception as exc:
-        print('RESULTADO: SIMULACION FALLIDA')
-        print('MOTIVO:', exc)
-        sys.exit(1)
+        deployment = Deployment(json.loads(args.config.read_text()))
+        if args.command == "plan":
+            print(json.dumps(deployment.plan(args.artifact.resolve()), sort_keys=True))
+        elif args.command in ("intervene", "recover-intervention"):
+            Intervention(deployment, args.recipe).execute(
+                args.approve, recovering=args.command == "recover-intervention",
+            )
+        elif args.command == "structure":
+            if deployment.structure is None:
+                raise ValueError("El perfil no define comprobaciones estructurales")
+            print(json.dumps(deployment.structure.evidence(review=True), sort_keys=True))
+        elif args.command == "status":
+            print(json.dumps(deployment.status(), sort_keys=True))
+        elif args.command == "apply":
+            print(deployment.apply(args.artifact.resolve(), args.approve))
+        else:
+            deployment.recover(args.approve)
+    except Exception as error:
+        print(f"Despliegue: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

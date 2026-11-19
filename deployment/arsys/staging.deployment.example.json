@@ -1,0 +1,81 @@
+{
+  "environment": "staging",
+  "data_root": "/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231",
+  "baseline": "/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231",
+  "protected_paths": [
+    "/var/www/vhosts/dealfonso.com/sorteos",
+    "/var/www/vhosts/dealfonso.com/rifas/central",
+    "/var/www/vhosts/dealfonso.com/rifas/entidades",
+    "/var/www/vhosts/dealfonso.com/rifas/platform_app",
+    "/var/www/vhosts/dealfonso.com/rifas/wsgi.py",
+    "/var/www/vhosts/dealfonso.com/rifas/.rifas-deploy",
+    "/var/www/vhosts/dealfonso.com/rifas/ops-reviewed",
+    "/srv/rifas-deploy/production"
+  ],
+  "allowed_signers": "/srv/rifas-deploy/trust/release-signers",
+  "approval_signers": "/srv/rifas-deploy/staging/trust/approval-signers",
+  "runtime_python": "/srv/rifas-deploy/staging/venv/bin/python",
+  "backup_components": [
+    "ops-reviewed"
+  ],
+  "hooks": {
+    "drain": [
+      "/srv/rifas-deploy/staging/bin/hook",
+      "drain"
+    ],
+    "activate": [
+      "/srv/rifas-deploy/staging/bin/hook",
+      "activate"
+    ],
+    "resume": [
+      "/srv/rifas-deploy/staging/bin/hook",
+      "resume"
+    ],
+    "ready": [
+      "/srv/rifas-deploy/staging/venv/bin/python",
+      "/srv/rifas-deploy/coordinator/deployment/smoke.py",
+      "--base",
+      "http://127.0.0.1:8768",
+      "--version",
+      "2.3.1",
+      "--slug",
+      "ENTITY_PENDING"
+    ]
+  },
+  "checks": {
+    "sorteos": [
+      "/srv/rifas-deploy/staging/venv/bin/python",
+      "/srv/rifas-deploy/coordinator/deployment/smoke.py",
+      "--base",
+      "http://127.0.0.1:8768",
+      "--version",
+      "2.3.1",
+      "--slug",
+      "ENTITY_PENDING",
+      "--raffle-id",
+      "ID_PENDING",
+      "--marker",
+      "MARKER_PENDING"
+    ]
+  },
+  "control_root": "/srv/rifas-deploy/staging/control",
+  "structure": {
+    "unit": "rifas-pruebas.service",
+    "peer_unit": "rifas-platform.service",
+    "port": 8768,
+    "working_directory": "/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231",
+    "writer_observer": [
+      "/srv/rifas-deploy/staging/bin/observe-writers"
+    ],
+    "writer_groups": [],
+    "review_files": [
+      "/srv/rifas-deploy/staging/deployment-hooks.json",
+      "/srv/rifas-deploy/staging/bin/hook",
+      "/srv/rifas-deploy/staging/bin/observe-writers",
+      "EFFECTIVE_PROXY_PATH_PENDING"
+    ],
+    "expected_fingerprint": "REVIEW_REQUIRED"
+  },
+  "intervention_signers": "/srv/rifas-deploy/staging/trust/intervention-signers",
+  "intervention_reviewed_digest": "REVIEW_REQUIRED"
+}

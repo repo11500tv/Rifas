@@ -1,0 +1,56 @@
+{
+  "format": 1,
+  "environment": "staging",
+  "installation": "/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231",
+  "files": {
+    "/srv/rifas-deploy/staging/reviewed/validate": "REVIEW_REQUIRED",
+    "/srv/rifas-deploy/staging/reviewed/backup": "REVIEW_REQUIRED",
+    "/srv/rifas-deploy/staging/reviewed/verify_backup": "REVIEW_REQUIRED",
+    "/srv/rifas-deploy/staging/reviewed/close": "REVIEW_REQUIRED",
+    "/srv/rifas-deploy/staging/reviewed/apply": "REVIEW_REQUIRED",
+    "/srv/rifas-deploy/staging/reviewed/verify": "REVIEW_REQUIRED",
+    "/srv/rifas-deploy/staging/reviewed/rollback": "REVIEW_REQUIRED",
+    "/srv/rifas-deploy/staging/reviewed/verify_rollback": "REVIEW_REQUIRED",
+    "/srv/rifas-deploy/staging/reviewed/reopen": "REVIEW_REQUIRED",
+    "/srv/rifas-deploy/staging/reviewed/evidence-and-inverses.json": "REVIEW_REQUIRED"
+  },
+  "steps": {
+    "validate": [
+      "/srv/rifas-deploy/staging/reviewed/validate"
+    ],
+    "backup": [
+      "/srv/rifas-deploy/staging/reviewed/backup"
+    ],
+    "verify_backup": [
+      "/srv/rifas-deploy/staging/reviewed/verify_backup"
+    ],
+    "close": [
+      "/srv/rifas-deploy/staging/reviewed/close"
+    ],
+    "apply": [
+      "/srv/rifas-deploy/staging/reviewed/apply"
+    ],
+    "verify": [
+      "/srv/rifas-deploy/staging/reviewed/verify"
+    ],
+    "rollback": [
+      "/srv/rifas-deploy/staging/reviewed/rollback"
+    ],
+    "verify_rollback": [
+      "/srv/rifas-deploy/staging/reviewed/verify_rollback"
+    ],
+    "reopen": [
+      "/srv/rifas-deploy/staging/reviewed/reopen"
+    ]
+  },
+  "publication": [
+    "PUBLIC_HTTPS_HEALTH_PENDING"
+  ],
+  "unit_scope": {
+    "unit": "rifas-pruebas.service",
+    "auxiliary_units": [],
+    "protected_units": [
+      "rifas-platform.service"
+    ]
+  }
+}

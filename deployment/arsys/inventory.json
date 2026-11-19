@@ -1,0 +1,127 @@
+{
+  "source": "Inspección de Arsys comunicada para fase 2D; sin consulta desde Codex",
+  "confirmed": {
+    "production": {
+      "root": "/var/www/vhosts/dealfonso.com/rifas",
+      "unit": "rifas-platform.service",
+      "port": 8767,
+      "active_at_inspection": true
+    },
+    "staging": {
+      "root": "/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231",
+      "unit": "rifas-pruebas.service",
+      "port": 8768,
+      "active_at_inspection": true,
+      "inspection_2e": {
+        "source": "Resultado de la inspección de solo lectura bd21316 facilitado por el usuario",
+        "proxy_reference": {
+          "file": "vhost_nginx.conf",
+          "line": 42,
+          "backend_port": 8768
+        },
+        "listener": {
+          "count": 1,
+          "loopback_only": true
+        },
+        "proxy_files_reviewed": 5,
+        "acl": {
+          "readable_count": 0,
+          "failure_reason": "unknown"
+        },
+        "main_directory_mode": "0755",
+        "control_directory_exists": false,
+        "kill_mode": "control-group",
+        "protect_system_strict": false,
+        "direct_dependency_references_to_production_or_legacy_detected": false
+      },
+      "inspection_2e_followup": {
+        "source": "Segunda inspección de solo lectura de Arsys comunicada por el usuario",
+        "getfacl": "executable_missing",
+        "existing_directories_acl": {
+          "access": "attribute_absent",
+          "default": "attribute_absent"
+        },
+        "staging_control_parent": "path_missing",
+        "nginx": {
+          "file": "vhost_nginx.conf",
+          "location_line": 38,
+          "auth_basic_line": 39,
+          "proxy_pass_line": 42,
+          "backend_port": 8768,
+          "expected_literal_matches": 1,
+          "effective_verified": false,
+          "pending": [
+            "competing_locations_and_public_aliases",
+            "inheritance_from_effective_http_vhost"
+          ]
+        }
+      },
+      "final_probe_reported": {
+        "source": "Resultados comunicados por el usuario de la última inspección; sin consulta desde Codex",
+        "probe_effective_identity": "root",
+        "writable_by_probe_interpretation": "Observed for root only; not evidence of write access by the future identity",
+        "nginx_competing_route_count": 15,
+        "competing_route_details_available_for_review": false
+      }
+    },
+    "legacy": {
+      "root": "/var/www/vhosts/dealfonso.com/sorteos",
+      "port": 8766,
+      "excluded": true
+    },
+    "current_identity": "shared_user_and_group",
+    "sqlite": "separate_by_environment"
+  },
+  "pending": [
+    "effective_staging_proxy_and_bypasses",
+    "operating_system_write_and_service_isolation",
+    "writer_and_scheduler_coverage",
+    "effective_sqlite_contract_and_catalog",
+    "complete_external_restore",
+    "effective_acl_and_permissions_of_future_staging_identity",
+    "staging_control_directory_and_systemd_hardening"
+  ],
+  "checked_each_operation": [
+    "paths_and_acl_metadata",
+    "unit_identity_and_confinement",
+    "private_listener_attributed_to_unit",
+    "writer_observer_visibility_and_scope",
+    "proxy_gate_through_hooks",
+    "snapshot_integrity",
+    "schema_and_package_tests"
+  ],
+  "invalidates_structural_evidence": [
+    "unit_or_dropins",
+    "proxy_and_included_review_files",
+    "identity_groups_permissions_acl_mounts",
+    "paths",
+    "profile_and_policy_files"
+  ],
+  "phase_2e_closure": {
+    "resolved_evidence": [
+      "unit_port_and_database_separation_as_reported",
+      "getfacl_executable_missing",
+      "posix_acl_attributes_absent_in_sampled_directories",
+      "literal_nginx_location_and_basic_reference"
+    ],
+    "final_read_only_pending": [
+      "loaded_vhost_and_ordered_includes",
+      "competing_aliases_and_direct_routes_to_8768",
+      "maintenance_scope_and_precedence",
+      "writers_cron_plesk_and_transitive_unit_dependencies",
+      "permissions_groups_mounts_and_delegation_evidence"
+    ],
+    "requires_authorized_test": [
+      "effective_dedicated_staging_permissions_and_service_delegation",
+      "writer_drain_without_effects_on_production_or_legacy",
+      "barrier_on_all_reviewed_routes_and_basic_after_reopen",
+      "external_recovery"
+    ],
+    "release_intervention_ready": false,
+    "requires_before_batch_signature": [
+      "reviewed_effective_route_and_writer_maps",
+      "exact_changes_backups_and_inverses",
+      "separate_authorizations_and_pinned_digest"
+    ]
+  }
+}

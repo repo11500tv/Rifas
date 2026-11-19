@@ -1,7 +1,5 @@
 """Configuración SMTP independiente por entidad."""
 
-from pathlib import Path
-
 from cryptography.fernet import Fernet
 
 
@@ -18,11 +16,9 @@ SMTP_KEYS = (
 
 def encryption_key_path():
     """Ruta de la clave exclusiva de esta instalación."""
-    return (
-        Path(__file__).resolve().parent.parent
-        / "central"
-        / "smtp_encryption.key"
-    )
+    from platform_app import ROOT
+
+    return ROOT / "central" / "smtp_encryption.key"
 
 
 def cipher():

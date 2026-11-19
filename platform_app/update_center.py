@@ -16,7 +16,9 @@ MAX_ZIP_BYTES = 700_000
 MAX_FILES = 150
 MAX_UNCOMPRESSED = 8_000_000
 MAX_SIGNATURE_BYTES = 20_000
-PUBLIC_KEY_PATH = Path(__file__).resolve().parents[1] / "rifas_actualizaciones_ed25519.pub"
+from platform_app import ROOT
+
+PUBLIC_KEY_PATH = ROOT / "rifas_actualizaciones_ed25519.pub"
 SIGNING_IDENTITY = "rifas-actualizaciones"
 SIGNING_NAMESPACE = "rifas-actualizaciones"
 
