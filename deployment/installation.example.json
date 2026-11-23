@@ -1,0 +1,31 @@
+{
+  "format": "rifas-installation-v1",
+  "domain": "example.org",
+  "project": {
+    "user": "projectowner",
+    "group": "projectgroup",
+    "root": "/srv/example/rifas"
+  },
+  "environments": {
+    "staging": {
+      "root": "/srv/example/rifas-stage",
+      "service_user": "rifasstage",
+      "unit": "rifas-stage.service",
+      "port": 8768,
+      "external_files": [
+        "/etc/systemd/system/rifas-stage.service",
+        "/etc/nginx/conf.d/rifas-stage.conf"
+      ]
+    },
+    "production": {
+      "root": "/srv/example/rifas-prod",
+      "service_user": "rifasprod",
+      "unit": "rifas-prod.service",
+      "port": 8767,
+      "external_files": [
+        "/etc/systemd/system/rifas-prod.service",
+        "/etc/nginx/conf.d/rifas-prod.conf"
+      ]
+    }
+  }
+}
