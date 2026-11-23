@@ -127,5 +127,28 @@ class PortableInstallationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_deployment_profile(profile)
 
+    def test_external_backup_rejects_manifest_traversal(self):
+        self.load()
+        dest = self.base / "backup"
+        backup_external("staging", dest, self.manifest)
+        inventory = dest / "inventory.json"
+        data = json.loads(inventory.read_text())
+        data["files"][0]["backup_name"] = "../service.conf"
+        inventory.write_text(json.dumps(data))
+        with self.assertRaises(RuntimeError):
+            verify_external(dest)
+
+    def test_external_backup_rejects_duplicate_records(self):
+        self.load()
+        dest = self.base / "backup"
+        backup_external("staging", dest, self.manifest)
+        inventory = dest / "inventory.json"
+        data = json.loads(inventory.read_text())
+        data["files"].append(dict(data["files"][0]))
+        inventory.write_text(json.dumps(data))
+        with self.assertRaises(RuntimeError):
+            verify_external(dest)
+
+
 if __name__ == "__main__":
     unittest.main()
