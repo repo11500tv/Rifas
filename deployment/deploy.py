@@ -512,7 +512,8 @@ def main():
         if action == "apply":
             command.add_argument("--approve", type=Path, required=True)
     commands.add_parser("recover").add_argument("--approve", type=Path, required=True)
-    commands.add_parser("status")
+    status = commands.add_parser("status")
+    status.add_argument("--verify-service-bridge", action="store_true")
     commands.add_parser("structure")
     for action in ("intervene", "recover-intervention"):
         command = commands.add_parser(action)
@@ -532,7 +533,16 @@ def main():
                 raise ValueError("El perfil no define comprobaciones estructurales")
             print(json.dumps(deployment.structure.evidence(review=True), sort_keys=True))
         elif args.command == "status":
-            print(json.dumps(deployment.status(), sort_keys=True))
+            result = deployment.status()
+            if args.verify_service_bridge:
+                if deployment.name != "staging":
+                    raise ValueError("El puente de servicio solo se puede verificar en PRUEBAS")
+                subprocess.run(
+                    [sys.executable, "-B", "-m", "deployment.arsys.staging_service_bridge", "request", "status"],
+                    timeout=45, check=True,
+                )
+                result["staging_service"] = "active"
+            print(json.dumps(result, sort_keys=True))
         elif args.command == "apply":
             print(deployment.apply(args.artifact.resolve(), args.approve))
         else:
