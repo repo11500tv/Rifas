@@ -53,6 +53,57 @@ class BizumToPurchaseTest(BizumApprovalTest):
         p.start()
         self.addCleanup(p.stop)
 
+    def test_bizum_credits_are_isolated_by_entity(self):
+        """A beta approval must not fund purchases in alpha."""
+        import sqlite3
+        beta_path = self.path.with_name("beta.sqlite3")
+        with self.db() as source, sqlite3.connect(beta_path) as target:
+            source.backup(target)
+
+        def isolated_db(slug):
+            if slug == "alpha":
+                return self.db()
+            if slug != "beta":
+                raise AssertionError("Unexpected entity")
+            con = sqlite3.connect(beta_path, timeout=15)
+            con.row_factory = sqlite3.Row
+            con.execute("PRAGMA foreign_keys=ON")
+            return con
+
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            for module in ("entity_routes", "participant_topup_admin",
+                           "participant_raffle_purchases", "participant_routes"):
+                stack.enter_context(patch("platform_app." + module + ".edb",
+                                          side_effect=isolated_db))
+            admin = self.app.test_client()
+            with admin.session_transaction() as session:
+                session["entity_slug"] = "beta"
+                session["entity_user"] = "admin"
+                session["entity_user_id"] = 1
+            response = admin.post("/e/beta/administracion/recargas/1/resolver",
+                                  data={"decision": "approve",
+                                        "payment_confirmed": "yes"})
+            self.assertEqual(response.status_code, 302)
+            buyer = self.app.test_client()
+            with buyer.session_transaction() as session:
+                session["participant_slug"] = "alpha"
+                session["participant_id"] = 1
+            response = buyer.post("/e/alpha/participantes/sorteos/1/comprar",
+                                  data={"numbers": ["4"]})
+            self.assertEqual(response.status_code, 302)
+
+        with self.db() as alpha:
+            self.assertEqual(alpha.execute(
+                "SELECT COUNT(*) FROM credit_movements").fetchone()[0], 0)
+            self.assertEqual(alpha.execute(
+                "SELECT COUNT(*) FROM raffle_numbers").fetchone()[0], 0)
+        with sqlite3.connect(beta_path) as beta:
+            self.assertEqual(beta.execute(
+                "SELECT SUM(amount_cents) FROM credit_movements").fetchone()[0], 1200)
+            self.assertEqual(beta.execute(
+                "SELECT COUNT(*) FROM raffle_numbers").fetchone()[0], 0)
+
     def test_bizum_approval_funds_purchase_and_prevents_reuse(self):
         participant = self.app.test_client()
         with participant.session_transaction() as session:
