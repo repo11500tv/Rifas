@@ -10,13 +10,13 @@ from deployment.hooks import Hooks
 class RestrictedServiceControlTests(unittest.TestCase):
     def settings(self, root):
         return {
-            "gate": str(root / "maintenance"),
-            "target": str(root / "release.json"),
+            "gate": str(root / "control" / "maintenance"),
+            "target": str(root / "control" / "release.json"),
             "scope": {
                 "environment": "staging",
                 "data_root": str(root / "data"),
                 "baseline": str(root / "data"),
-                "control_root": str(root),
+                "control_root": str(root / "control"),
             },
             "systemd_unit": "rifas-pruebas.service",
             "service_control": ["/usr/bin/sudo", "-n", "/usr/local/sbin/rifas-staging-service"],
@@ -29,6 +29,7 @@ class RestrictedServiceControlTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="rifas-hook-") as temp:
             root = Path(temp).resolve()
             (root / "data").mkdir()
+            (root / "control").mkdir()
             with patch("deployment.hooks.subprocess.run") as run:
                 hooks = Hooks(self.settings(root))
                 hooks.run("stop")
