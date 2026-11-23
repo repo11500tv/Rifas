@@ -10,6 +10,7 @@ on:
       - 'platform_app/**'
       - 'deployment/packages/google_oauth_2.4.2.json'
       - 'tests/test_google_oauth.py'
+      - 'tests/test_direct_purchases.py'
       - 'requirements-google.txt'
       - '.github/workflows/google-oauth.yml'
   workflow_dispatch:
@@ -35,3 +36,5 @@ jobs:
         run: python -m compileall -q platform_app deployment tests/test_google_oauth.py
       - name: Run isolated Google OAuth functional tests
         run: python -m unittest discover -s tests -p 'test_google_oauth.py' -v
+      - name: Run direct purchase and rollback tests
+        run: python -m unittest discover -s tests -p 'test_direct_purchases.py' -v
