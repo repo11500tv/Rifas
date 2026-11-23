@@ -13,7 +13,7 @@ import subprocess
 import sys
 from uuid import uuid4
 
-from deployment import approval, backup_integral as snapshot, schema
+from deployment import approval, backup_integral as snapshot, schema, backup_external
 from deployment.installation import validate_deployment_profile
 from deployment.structure import Structure
 from deployment.intervention import Intervention
@@ -108,6 +108,7 @@ class Deployment:
         self.signers = Path(config["allowed_signers"]).resolve(strict=True)
         self.approvers = Path(config["approval_signers"]).resolve(strict=True)
         self.backup_components = config["backup_components"]
+        self.installation_manifest = config.get("installation_manifest")
         if not isinstance(self.backup_components, list):
             raise ValueError("backup_components debe ser una lista de rutas gestionadas")
         if (self.root.is_relative_to("/root") or self.root == Path("/") or not self.root.is_dir()
@@ -283,10 +284,12 @@ class Deployment:
             if file.is_file()
         )
         managed = snapshot.inventory(self.root, active, self.backup_components, databases)
+        external = (backup_external.inventory_external(self.name, self.installation_manifest)
+                    if self.installation is not None else [])
         managed_size = sum(item["size"] for item in managed
                            if item["kind"] != "directory" and
                            (item["group"] != "data" or Path(item["path"]) not in databases))
-        if shutil.disk_usage(self.state if self.state.is_dir() else self.root).free < payload_size + managed_size + 2 * database_size:
+        if shutil.disk_usage(self.state if self.state.is_dir() else self.root).free < payload_size + managed_size + 2 * database_size + sum(item["size"] for item in external):
             raise ValueError("Espacio insuficiente para release y respaldo SQLite")
         return manifest, fingerprint, databases, active, expected
 
@@ -305,7 +308,8 @@ class Deployment:
                 "package": manifest["package"], "commit": manifest["commit"],
                 "databases": [str(path) for path in databases], "checks": manifest["checks"],
                 "backup_components": ["central", "entidades", *self.backup_components],
-                "installation": str(self.root), "structure": evidence}
+                "installation": str(self.root), "structure": evidence,
+                "external_backup_files": len(self.installation["environments"][self.name]["external_files"]) if self.installation else 0}
 
     def check_operation(self, *, drained=False):
         if self.structure is None:
@@ -386,6 +390,8 @@ class Deployment:
         self.hook("drain", self.hooks["drain"], previous)
         if phase == "changing":
             self.check_operation(drained=True)
+            if journal.get("external_snapshot"):
+                backup_external.verify_external(self.state / "runs" / journal["run"] / "backup-external")
             snapshot.restore(
                 self.root, previous, journal["components"], [Path(path) for path in journal["databases"]],
                 self.state / "runs" / journal["run"] / "backup", journal["snapshot"], self.event,
@@ -471,6 +477,11 @@ class Deployment:
                     self.root, previous, self.backup_components, paths, folder / "backup", self.event
                 )
                 snapshot.verify(folder / "backup", journal["snapshot"])
+                if self.installation is not None:
+                    backup_external.backup_external(self.name, folder / "backup-external", self.installation_manifest)
+                    backup_external.verify_external(folder / "backup-external")
+                    journal["external_snapshot"] = True
+                    self.event("external_backup_verified", files=len(self.installation["environments"][self.name]["external_files"]))
                 self.checkpoint(journal, "backed_up")
                 self.checkpoint(journal, "changing")
                 schema.migrate(self.root, paths, manifest["schema"], manifest["migration"], payload, self.event)
