@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from deployment.installation import load_installation
+from deployment.installation import load_installation, validate_deployment_profile
 from deployment.backup_external import backup_external, verify_external
 
 
@@ -64,6 +64,43 @@ class PortableInstallationTests(unittest.TestCase):
         (dest / "0_service.conf").write_text("tampered")
         with self.assertRaises(RuntimeError):
             verify_external(dest)
+
+
+    def profile(self):
+        self.load()
+        return {
+            "environment": "staging",
+            "installation_manifest": str(self.manifest),
+            "data_root": self.config["environments"]["staging"]["root"],
+            "control_root": str(self.base / "control"),
+            "structure": {
+                "unit": "stage.service",
+                "peer_unit": "prod.service",
+                "port": 8768,
+                "working_directory": self.config["environments"]["staging"]["root"],
+            },
+        }
+
+    def test_coordinator_profile_binding(self):
+        self.assertEqual(validate_deployment_profile(self.profile())["domain"], "example.org")
+
+    def test_coordinator_rejects_wrong_unit(self):
+        profile = self.profile()
+        profile["structure"]["unit"] = "wrong.service"
+        with self.assertRaises(ValueError):
+            validate_deployment_profile(profile)
+
+    def test_coordinator_rejects_wrong_root(self):
+        profile = self.profile()
+        profile["data_root"] = str(self.base / "wrong")
+        with self.assertRaises(ValueError):
+            validate_deployment_profile(profile)
+
+    def test_coordinator_rejects_wrong_peer(self):
+        profile = self.profile()
+        profile["structure"]["peer_unit"] = "wrong.service"
+        with self.assertRaises(ValueError):
+            validate_deployment_profile(profile)
 
 
 if __name__ == "__main__":
