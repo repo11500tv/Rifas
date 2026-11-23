@@ -130,7 +130,7 @@ def requests_page(slug):
             message = (
                 "Solicitud registrada. "
                 "Los creditos se incorporaran "
-                "cuando la hermandad confirme el pago."
+                "cuando la entidad confirme el pago."
             )
 
         except ValueError as exc:
