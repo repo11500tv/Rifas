@@ -12,13 +12,13 @@ from joserfc.errors import JoseError
 from requests import RequestException
 from flask import Blueprint, abort, current_app, redirect, request, session, url_for
 
-from platform_app.entity_routes import edb
+from platform_app.entity_routes import edb, layout
 from platform_app.participant_google_flow import begin_flow, consume_flow
 from platform_app.participant_google_login_core import (
     GoogleIdentityNotEligible, GoogleIdentityNotLinked, resolve_verified_google_login,
 )
 from platform_app.participant_google_schema import validate_google_schema
-from platform_app.participant_routes import active_entity
+from platform_app.participant_routes import EMAIL_BUTTON_STYLE, active_entity
 from platform_app.participant_session_shared import finish_verified_participant_session
 
 bp = Blueprint("participant_google_oidc", __name__, url_prefix="/e/<slug>/participantes/google")
@@ -105,5 +105,14 @@ def google_callback(slug):
             participant_id = resolve_verified_google_login(connection, claims["sub"])
             finish_verified_participant_session(session, connection, slug, participant_id)
         except (GoogleIdentityNotLinked, GoogleIdentityNotEligible, PermissionError):
-            abort(403)
+            email_access = url_for("participant_access_v2.request_code", slug=slug)
+            return layout(
+                "Acceso con Google",
+                '<div class="card" style="text-align:center">'
+                '<h2>No pudimos iniciar sesión con Google</h2>'
+                '<p>Si ya tienes cuenta en esta entidad, accede con un código de correo. '
+                'Después, abre <strong>Mi cuenta</strong> y pulsa <strong>Vincular Google</strong>.</p>'
+                f'<p><a href="{email_access}" style="{EMAIL_BUTTON_STYLE}">'
+                'Acceder con código por correo</a></p></div>',
+            ), 403
     return redirect(url_for("participants.account", slug=slug))
