@@ -94,3 +94,18 @@ def verify_external(destination):
                 or sha256(copied) != record["sha256"]):
             raise RuntimeError("Integridad incorrecta: " + str(copied))
     return True
+
+
+def assert_external_unchanged(environment, destination, installation_manifest):
+    """Fail closed on privileged configuration drift; never restore it implicitly."""
+    destination = Path(destination)
+    verify_external(destination)
+    manifest = json.loads((destination / "inventory.json").read_text(encoding="utf-8"))
+    if manifest["environment"] != environment:
+        raise RuntimeError("La copia externa pertenece a otro entorno")
+    expected = [{key: item[key] for key in ("source", "size", "sha256")}
+                for item in manifest["files"]]
+    current = inventory_external(environment, installation_manifest)
+    if current != expected:
+        raise RuntimeError("Configuración externa modificada: requiere intervención autorizada")
+    return True
