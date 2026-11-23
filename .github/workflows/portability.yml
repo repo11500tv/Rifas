@@ -31,3 +31,5 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_portability.py' -v
       - name: Run synthetic recovery safety tests
         run: python -m unittest discover -s tests -p 'test_recovery_safety.py' -v
+      - name: Run disposable SQLite rollback tests
+        run: python -m unittest discover -s tests -p 'test_sqlite_rollback.py' -v
