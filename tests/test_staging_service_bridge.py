@@ -46,3 +46,23 @@ class StagingServiceBridgeTests(unittest.TestCase):
         with patch.object(bridge.subprocess, "run", side_effect=subprocess.TimeoutExpired("sudo", 35)):
             bridge.relay(io.BytesIO(bridge.PREFIX + b"start\n"), reply, io.BytesIO())
         self.assertEqual(reply.getvalue(), b"ERROR\n")
+
+    def test_writer_report_uses_the_fixed_read_only_helper(self):
+        report = b'{"complete": true, "paths": [], "writers": []}'
+        reply = io.BytesIO()
+        with patch.object(
+            bridge.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, report)
+        ) as control:
+            bridge.relay(io.BytesIO(bridge.PREFIX + b"writer-report\n"), reply, io.BytesIO())
+        self.assertEqual(control.call_args.args[0], ["/usr/bin/sudo", "-n", bridge.WRITERS])
+        self.assertEqual(reply.getvalue(), bridge.REPORT_PREFIX + report + b"\n")
+
+    def test_invalid_writer_report_is_not_passed_to_the_coordinator(self):
+        for report in (b"not json", b"[]", b'{"too_large":"' + b"x" * bridge.MAX_REPLY + b'"}'):
+            with self.subTest(length=len(report)):
+                reply = io.BytesIO()
+                with patch.object(
+                    bridge.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, report)
+                ):
+                    bridge.relay(io.BytesIO(bridge.PREFIX + b"writer-report\n"), reply, io.BytesIO())
+                self.assertEqual(reply.getvalue(), b"ERROR\n")

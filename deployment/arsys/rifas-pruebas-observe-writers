@@ -1,0 +1,10 @@
+#!/bin/sh
+# Install root-owned in /usr/local/sbin alongside an independently installed,
+# root-owned copy of deployment/structure.py in /usr/local/lib/rifas-pruebas.
+set -eu
+if [ "$#" -ne 0 ]; then
+    exit 64
+fi
+base=/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231
+exec /usr/bin/python3 -I -B /usr/local/lib/rifas-pruebas/structure.py \
+    "$base/central" "$base/entidades"

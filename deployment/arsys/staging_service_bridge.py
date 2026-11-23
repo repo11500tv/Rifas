@@ -1,5 +1,6 @@
 """Relay staging service operations through the isolated coordinator's pipes."""
 
+import json
 import os
 import pwd
 import subprocess
@@ -10,14 +11,27 @@ PREFIX = b"RIFAS-STAGING-SERVICE "
 ACTIONS = {b"start", b"stop", b"status"}
 LAUNCHER = "/usr/local/sbin/rifas-pruebas-deploy"
 SERVICE = "/usr/local/sbin/rifas-staging-service"
+WRITERS = "/usr/local/sbin/rifas-pruebas-observe-writers"
+REPORTS = {
+    b"isolation-report": [sys.executable, "-B", "-m", "deployment.arsys.inspect_staging_isolation"],
+    b"writer-report": ["/usr/bin/sudo", "-n", WRITERS],
+}
+REPORT_PREFIX = b"REPORT "
+MAX_REPLY = 65536
 
 
 def request(action):
-    if action not in ACTIONS or sys.stdin.isatty() or sys.stdout.isatty():
+    if (action not in ACTIONS and action not in REPORTS) or sys.stdin.isatty() or sys.stdout.isatty():
         raise ValueError("El control de PRUEBAS requiere el puente del coordinador")
     sys.stdout.buffer.write(PREFIX + action + b"\n")
     sys.stdout.buffer.flush()
-    reply = sys.stdin.buffer.readline(32)
+    reply = sys.stdin.buffer.readline(MAX_REPLY + 1)
+    if action in REPORTS and reply.startswith(REPORT_PREFIX) and reply.endswith(b"\n") and len(reply) <= MAX_REPLY:
+        report = json.loads(reply[len(REPORT_PREFIX):])
+        if not isinstance(report, dict):
+            raise ValueError("Informe inválido del puente de PRUEBAS")
+        print(json.dumps(report))
+        return 0
     if reply == b"OK\n":
         return 0
     if reply == b"INACTIVE\n" and action == b"status":
@@ -33,19 +47,28 @@ def relay(source, reply, output):
             continue
         action = line[len(PREFIX):].removesuffix(b"\n")
         result = b"ERROR\n"
-        if action in ACTIONS and line.endswith(b"\n"):
+        command = REPORTS.get(action)
+        if action in ACTIONS:
+            command = ["/usr/bin/sudo", "-n", SERVICE, action.decode("ascii")]
+        if command is not None and line.endswith(b"\n"):
             try:
                 completed = subprocess.run(
-                    ["/usr/bin/sudo", "-n", SERVICE, action.decode("ascii")],
+                    command,
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                     timeout=35, check=False,
                 )
-                if completed.returncode == 0:
+                if completed.returncode == 0 and action in REPORTS:
+                    report = json.loads(completed.stdout)
+                    if isinstance(report, dict):
+                        encoded = REPORT_PREFIX + json.dumps(report).encode("ascii") + b"\n"
+                        if len(encoded) <= MAX_REPLY:
+                            result = encoded
+                elif completed.returncode == 0:
                     result = b"OK\n"
                 elif (action == b"status" and completed.returncode == 3
                       and completed.stdout.strip() == b"inactive"):
                     result = b"INACTIVE\n"
-            except (OSError, subprocess.TimeoutExpired):
+            except (OSError, ValueError, subprocess.TimeoutExpired):
                 pass
         reply.write(result)
         reply.flush()
@@ -71,7 +94,7 @@ def main(args):
             return request(args[1].encode("ascii"))
         if len(args) >= 2 and args[0] == "run":
             return run(args[1:])
-        raise ValueError("Uso: staging_service_bridge run OPERACIÓN | request start|stop|status")
+        raise ValueError("Uso: staging_service_bridge run OPERACIÓN | request ACCIÓN")
     except (KeyError, OSError, ValueError) as error:
         print(f"PRUEBAS: {error}", file=sys.stderr)
         return 1

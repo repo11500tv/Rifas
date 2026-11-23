@@ -45,7 +45,8 @@ def configuration(profile):
     }
     hook = [*python, "deployment.hooks", "--config", str(HOOKS_FILE)]
     probe = [*python, "deployment.arsys.staging_google_checks"]
-    structure = dict(profile["structure"], expected_fingerprint="REVIEW_REQUIRED")
+    structure = dict(profile["structure"], expected_fingerprint="REVIEW_REQUIRED",
+                     writer_observer=[*bridge, "writer-report"])
     structure["review_files"] = sorted(set(structure.get("review_files", ())) | {str(HOOKS_FILE)})
     updated = dict(
         profile, baseline=str(STAGE), runtime_python=str(PYTHON), structure=structure,
