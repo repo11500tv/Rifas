@@ -1,37 +1,36 @@
-# Integración staging Arsys: estado verificable y bloqueo de despliegue
+# Rifas — estado real de integración de staging (23-11-2026)
 
-Fecha de referencia: 2026-11-23. Rama de trabajo: `feature/google-oauth-242`.
+## Alcance y regla de trabajo
 
-## Hechos verificados en el servidor (salidas facilitadas por operador)
+GitHub es la fuente del código. No crear más instaladores de un solo uso ni subir scripts sueltos a la raíz de `dealfonso.com`. El coordinador universal de `deployment/` es el único motor de despliegue para staging y producción. La preparación del sistema operativo (systemd, proxy, permisos) es distinta de un despliegue de aplicación. No tocar producción ni `/sorteos/`; no aplicar cambios en staging sin autorización expresa para la operación concreta.
 
-- `rifas-pruebas.service` está activo; consulta ejecutada como `dealfonsocom`.
-- `sudo -n /usr/local/sbin/rifas-staging-service status` devuelve `active`.
-- `sudo -i` para `dealfonsocom` está denegado.
-- El instalador de permisos informó `INSTALACIÓN CORRECTA` y `visudo -c` sin errores.
-- El instalador no actuó sobre los servicios.
-- El repositorio es privado y no debe hacerse público.
-- Producción y staging comparten usuario Unix `dealfonsocom`; staging está anidado bajo la ruta de producción.
+## Verificado por salidas del operador (no por acceso remoto directo)
 
-## Cambios en el repositorio, todavía NO instalados en Arsys
+- Staging: `/var/www/vhosts/dealfonso.com/rifas/staging/prueba_231`; servicio `rifas-pruebas.service`, puerto 8768, HTTP 200.
+- Producción: `/var/www/vhosts/dealfonso.com/rifas`; servicio `rifas-platform.service`, activo. Aplicación histórica `/sorteos/` excluida.
+- Ambos servicios usan `dealfonsocom`, sin `ProtectSystem`, `ReadWritePaths` ni `InaccessiblePaths`. La cuenta tiene permisos de escritura en las tres raíces. **No hay aislamiento de escritura demostrado**.
+- El ejecutor restringido `/usr/local/sbin/rifas-staging-service` responde `active` mediante sudo limitado; `sudo -i` denegado a `dealfonsocom`.
+- Checkout de código del coordinador descargado en `/srv/rifas-deploy/staging/checkout`, commit `e9140463e8f45febe853b860a8490c121c14fb68`. No se ha configurado ni activado.
+- Directorios `/srv/rifas-deploy/staging/{control,trust,config}` creados con propietario root y modo 0700.
+- No existe `.rifas-deploy` en staging; tampoco perfiles operativos, firmas de confianza, barrera HTTP, selector ni `hook serve` en el servicio.
+- En staging existen base central, plantilla maestra y una base de entidad; no se detectaron archivos WAL, SHM ni journal en la muestra. El `venv` de staging es enlace simbólico y debe resolverse.
+- Espacio libre observado: 74,62 GB. Git, OpenSSH y Python 3.12 disponibles.
+- En la configuración Nginx inspeccionada hay una referencia al puerto 8768, pero **no se ha demostrado** la barrera HTTP 503 ni todas las rutas de acceso.
+- La rama contiene la receta `deployment/packages/google_oauth_2.4.2.json`; la ejecución CI 45159247173 fue satisfactoria para el commit de checkout.
+- El operador ha hecho **público temporalmente** el repositorio. Antes de volver a privado, configurar lectura autenticada; revisar exposición de secretos en el historial. No almacenar claves privadas ni credenciales en GitHub.
 
-- `deployment/hooks.py`: admite `service_control` opcional como argv fijo para start/stop; el comportamiento anterior con systemctl permanece cuando se omite.
-- `deployment/arsys/staging.hooks.example.json`: declara `["/usr/bin/sudo", "-n", "/usr/local/sbin/rifas-staging-service"]`.
-- `tests/test_staging_service_adapter.py`: pruebas sin invocar sudo/systemd real.
+## Trabajo pendiente, en un solo flujo versionado
 
-**No hay evidencia de que esas pruebas se hayan ejecutado en CI tras el último commit.**
+1. **Integración operativa revisada en GitHub**: definir perfiles reales de staging, acceso al checkout protegido, confianza SSHSIG y firma externa, barrera Nginx de todas las entradas, `hook serve` de la unidad staging, directorios de estado y selector, runtime y enlaces. No introducir nuevos scripts temporales en el vhost.
+2. **Aislamiento efectivo**: resolver o demostrar mediante confinamiento que procesos y operadores de staging no pueden escribir en producción ni en `/sorteos/`. No modificar rutas o permisos de producción como atajo. Cualquier ajuste de systemd, Nginx o identidades requiere revisión y autorización.
+3. **Respaldo y recuperación**: inventario de escritores, cobertura de código y SQLite, plantilla maestra y entidades, configuración revisada, copia externa y ensayo de restauración con datos sintéticos.
+4. **Validación automatizada**: pruebas del coordinador, de migración Google OAuth 2.4.2, consistencia entre código, plantilla y entidades, y verificaciones funcionales sin datos personales.
+5. **Despliegue**: fijar commit y artefacto firmado; ejecutar `plan`; solicitar autorización independiente y firmada para `apply` en staging; aplicar con copia, comprobaciones y reversión automática. Producción no participa.
 
-## Bloqueos obligatorios antes de staging
+## Higiene de servidor
 
-1. **Aislamiento de escritura**: demostrar con pruebas negativas, desde los contextos reales de operador, coordinador, Gunicorn y tareas programadas, que ninguno puede escribir en producción ni `/sorteos`. La restricción sudo no satisface este requisito: el UID compartido aún puede escribir donde tenga permisos.
-2. **Topología**: preferir separar staging fuera del árbol de producción y asignarle un UID propio, con ACL/montajes comprobados. Esto requiere un plan de migración reversible de staging y autorización separada. No cambiar propietario o permisos del árbol de producción para resolverlo.
-3. **Supervisor**: adaptar únicamente `rifas-pruebas.service` para servir el release seleccionado mediante el hook `serve`, con venv y directorios propios; verificar comportamiento de parada, reinicio y recuperación. Requiere autorización.
-4. **Proxy**: identificar todas las entradas públicas a staging y establecer barrera 503 efectiva sin alterar las ubicaciones de producción; probar bypass y cache. Requiere autorización.
-5. **Coordinador protegido**: checkout, perfiles, aprobaciones y claves fuera del alcance de escritura de Gunicorn; estado `.rifas-deploy` separado, respaldo externo cifrado y recuperación probada.
-6. **Datos**: comprobar inventario y migraciones SQLite de entidades existentes, plantilla maestra y código, con copias coherentes y prueba de restauración.
-7. **Pruebas**: ejecutar suite automatizada y ensayo sintético; solo después generar paquete firmado OAuth 2.4.2, solicitar autorización específica y ejecutar `plan` antes de `apply`.
+Los diagnósticos e instaladores temporales previamente depositados en la raíz de `dealfonso.com` no forman parte de la instalación operativa. Inventariarlos y verificar que no son usados antes de proponer su retirada; **no eliminarlos automáticamente ni sin autorización**. No crear una auditoría separada que retrase el despliegue: integrar el inventario y la limpieza segura en el flujo de aprovisionamiento.
 
-## Próxima decisión de infraestructura
+## Estado final
 
-Recomendación: **aislar staging con un usuario Unix distinto y raíz propia fuera del árbol de producción**, conservando producción y `/sorteos` intactos. Antes de ejecutar, preparar inventario de permisos, unidad systemd, Plesk/Nginx, puertos, cron y rutas, junto con copia y rollback. La autorización previa de instalar el ejecutor restringido **no autoriza** esta reubicación ni el despliegue de OAuth.
-
-No crear instaladores por versión. Toda acción de despliegue debe pasar por el coordinador universal; el aprovisionamiento de infraestructura es una operación separada, auditable y reversible.
+**No desplegado.** Google OAuth 2.4.2 no está activo en staging. Checkout y directorios de control preparados; integración de servicio/proxy/firmas, aislamiento y recuperación pendientes. La comprobación de lectura no sustituye una prueba de recuperación.
