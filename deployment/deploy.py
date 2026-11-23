@@ -14,6 +14,7 @@ import sys
 from uuid import uuid4
 
 from deployment import approval, backup_integral as snapshot, schema
+from deployment.installation import validate_deployment_profile
 from deployment.structure import Structure
 from deployment.intervention import Intervention
 from deployment.artifact import IDENTITY, MANIFEST, NAMESPACE, SIGNATURE, digest, payload_path, platform_version, verify_signature, REQUIREMENTS_NAME
@@ -98,6 +99,7 @@ def pinned_requirements(path):
 class Deployment:
     def __init__(self, config):
         self.config = config
+        self.installation = validate_deployment_profile(config)
         self.name = config["environment"]
         if self.name not in {"synthetic", "staging", "production"}:
             raise ValueError("Entorno desconocido")
