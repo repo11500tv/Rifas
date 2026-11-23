@@ -25,6 +25,7 @@ class RoleCheckTests(unittest.TestCase):
                       "control_root": str(self.control)},
             "gate": str(self.control / "maintenance"),
             "target": str(self.selector),
+            "identities": {"owner_uid": 1000, "service_uid": 1001},
         }
 
     def test_rejects_root(self):
@@ -37,14 +38,25 @@ class RoleCheckTests(unittest.TestCase):
             self.assertEqual(check(self.settings, "owner"), [])
 
     def test_service_must_not_write_control(self):
-        with patch("deployment.role_check.os.geteuid", return_value=1000):
+        with patch("deployment.role_check.os.geteuid", return_value=1001):
             self.assertIn("El servicio puede modificar el control",
                           check(self.settings, "service"))
+
+    def test_shared_uid_is_rejected(self):
+        self.settings["identities"]["service_uid"] = 1000
+        with patch("deployment.role_check.os.geteuid", return_value=1000):
+            with self.assertRaisesRegex(ValueError, "compartir UID"):
+                check(self.settings, "owner")
+
+    def test_wrong_uid_is_rejected(self):
+        with patch("deployment.role_check.os.geteuid", return_value=1002):
+            with self.assertRaisesRegex(ValueError, "identidad de ejecución"):
+                check(self.settings, "owner")
 
     def test_selector_symlink_is_rejected(self):
         self.selector.unlink()
         self.selector.symlink_to(self.data / "missing")
-        with patch("deployment.role_check.os.geteuid", return_value=1000):
+        with patch("deployment.role_check.os.geteuid", return_value=1001):
             self.assertIn("El servicio no puede leer el selector release.json",
                           check(self.settings, "service"))
 
