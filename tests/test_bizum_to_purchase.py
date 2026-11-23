@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from tests.test_bizum_approval import BizumApprovalTest
+from test_bizum_approval import BizumApprovalTest
 from platform_app.participant_raffle_purchases import bp as purchase_bp
 from platform_app.raffle_schema import SCHEMA_RAFFLES
 
