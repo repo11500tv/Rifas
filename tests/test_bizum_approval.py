@@ -52,6 +52,10 @@ class BizumApprovalTest(unittest.TestCase):
         app.secret_key = "test-secret"
         app.testing = True
         app.register_blueprint(bp)
+        # The real application registers entity.admin; this isolated fixture
+        # needs the same endpoint for shared layout navigation.
+        app.add_url_rule("/e/<slug>/administracion", endpoint="entity.admin",
+                         view_func=lambda slug: "admin")
         self.app = app
         for target in ("platform_app.entity_routes.edb",
                        "platform_app.participant_topup_admin.edb"):
