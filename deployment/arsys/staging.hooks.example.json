@@ -22,5 +22,10 @@
       "RIFAS_SESSION_COOKIE_PATH": "URL_PREFIX_PENDING"
     }
   },
-  "public_open_status": 401
+  "public_open_status": 401,
+  "service_control": [
+    "/usr/bin/sudo",
+    "-n",
+    "/usr/local/sbin/rifas-staging-service"
+  ]
 }
