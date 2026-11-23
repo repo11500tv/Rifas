@@ -492,6 +492,17 @@ class Deployment:
 
 
 def main():
+    import os
+    import pwd
+
+    try:
+        expected_uid = pwd.getpwnam("dealfonsocom").pw_uid
+    except KeyError:
+        print("Despliegue: la cuenta dealfonsocom no existe", file=sys.stderr)
+        return 1
+    if os.geteuid() != expected_uid:
+        print("Despliegue: ejecutar el coordinador como dealfonsocom", file=sys.stderr)
+        return 1
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     commands = parser.add_subparsers(dest="command", required=True)
