@@ -72,10 +72,25 @@ def verify_external(destination):
     manifest = json.loads(inventory.read_text(encoding="utf-8"))
     if manifest.get("format") != "rifas-external-backup-v1":
         raise RuntimeError("Formato de inventario incorrecto")
+    if not isinstance(manifest.get("files"), list) or not manifest["files"]:
+        raise RuntimeError("Inventario externo vacío o inválido")
+    names = set()
     for record in manifest["files"]:
-        copied = destination / record["backup_name"]
+        if not isinstance(record, dict) or set(record) != {"source", "size", "sha256", "backup_name"}:
+            raise RuntimeError("Registro de copia externa inválido")
+        name = record["backup_name"]
+        if (not isinstance(name, str) or not name or Path(name).name != name
+                or name in {".", ".."} or name in names):
+            raise RuntimeError("Nombre de respaldo externo inseguro")
+        names.add(name)
+        if (type(record["size"]) is not int or record["size"] < 0
+                or not isinstance(record["sha256"], str) or len(record["sha256"]) != 64):
+            raise RuntimeError("Metadatos de respaldo externo inválidos")
+        copied = destination / name
         if (copied.is_symlink() or not copied.is_file()
                 or copied.parent != destination
+                or copied.stat().st_nlink != 1
+                or copied.stat().st_size != record["size"]
                 or sha256(copied) != record["sha256"]):
             raise RuntimeError("Integridad incorrecta: " + str(copied))
     return True
