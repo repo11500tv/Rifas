@@ -103,5 +103,29 @@ class PortableInstallationTests(unittest.TestCase):
             validate_deployment_profile(profile)
 
 
+    def test_external_file_inside_environment_rejected(self):
+        self.config["environments"]["staging"]["external_files"] = [
+            str(self.base / "prod" / "secrets.conf")
+        ]
+        with self.assertRaises(ValueError):
+            self.load()
+
+    def test_external_file_non_string_rejected(self):
+        self.config["environments"]["staging"]["external_files"] = [None]
+        with self.assertRaises(ValueError):
+            self.load()
+
+    def test_control_root_overlap_rejected(self):
+        profile = self.profile()
+        profile["control_root"] = str(self.base / "prod" / "control")
+        with self.assertRaises(ValueError):
+            validate_deployment_profile(profile)
+
+    def test_control_root_root_directory_rejected(self):
+        profile = self.profile()
+        profile["control_root"] = "/"
+        with self.assertRaises(ValueError):
+            validate_deployment_profile(profile)
+
 if __name__ == "__main__":
     unittest.main()
