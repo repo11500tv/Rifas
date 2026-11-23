@@ -143,7 +143,9 @@ def metadata(path, record):
     info = path.stat()
     if (info.st_uid, info.st_gid) != (record["uid"], record["gid"]):
         os.chown(path, record["uid"], record["gid"])
-    os.chmod(path, record["mode"])
+        info = path.stat()
+    if stat.S_IMODE(info.st_mode) != record["mode"]:
+        os.chmod(path, record["mode"])
 
 
 def restore(data, previous, extra, databases, folder, fingerprint, event):
@@ -151,6 +153,7 @@ def restore(data, previous, extra, databases, folder, fingerprint, event):
     expected = {(record["group"], record["path"]): record["kind"] for record in records}
     scopes = roots(data, previous, extra)
     current = inventory(data, previous, extra, databases, restoring=True)
+    existing = {(record["group"], record["path"]): record for record in current}
     for record in sorted(current, key=lambda item: len(Path(item["path"]).parts), reverse=True):
         key = record["group"], record["path"]
         if expected.get(key) == record["kind"]:
@@ -166,6 +169,11 @@ def restore(data, previous, extra, databases, folder, fingerprint, event):
         path = confined(scopes[group][0], component(name))
         if kind == "directory":
             path.mkdir(parents=True, exist_ok=True)
+            continue
+        present = existing.get((group, name))
+        if (kind == "file" and present is not None
+                and all(present[key] == record[key] for key in ("kind", "mode", "uid", "gid", "size"))
+                and sha256(path) == record["sha256"]):
             continue
         path.parent.mkdir(parents=True, exist_ok=True)
         if kind == "sqlite":

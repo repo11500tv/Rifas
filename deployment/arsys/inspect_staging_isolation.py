@@ -25,6 +25,22 @@ PROTECTED = (
 )
 
 
+def gunicorn_process(proc):
+    name = (proc / "comm").read_text().strip()
+    if name == "gunicorn":
+        return True
+    if not re.fullmatch(r"python(?:3(?:\.12)?)?", name):
+        return False
+    args = (proc / "cmdline").read_bytes().rstrip(b"\0").split(b"\0")
+    runtime = DOMAIN / "rifas-deployment/staging/runtime/current/bin/python"
+    return (
+        len(args) >= 5
+        and Path(os.fsdecode(args[0])).resolve() == runtime.resolve(strict=True)
+        and args[1:4] == [b"-B", b"-m", b"gunicorn"]
+        and args[-1] == b"wsgi:app"
+    )
+
+
 def listener_processes(listeners, expected_group, expected_uid):
     if not listeners or any(host not in {"127.0.0.1", "::1"} or not pids for host, pids in listeners):
         raise ValueError("El puerto de PRUEBAS no es privado o sus procesos no son visibles")
@@ -35,7 +51,7 @@ def listener_processes(listeners, expected_group, expected_uid):
         uids = fields["Uid"].split()
         namespace = fields["NSpid"].split()
         if (process_group(proc) != expected_group or not expected_group
-                or (proc / "comm").read_text().strip() != "gunicorn"
+                or not gunicorn_process(proc)
                 or any(int(uid) != expected_uid for uid in uids)
                 or len(namespace) < 2 or int(namespace[0]) != pid
                 or fields["NoNewPrivs"].strip() != "1" or int(fields["CapEff"], 16)):
