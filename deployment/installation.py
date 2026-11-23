@@ -59,7 +59,7 @@ def load_installation(filename):
             _absolute(entry, "external_files")
     if len(set(units)) != 2 or len(set(ports)) != 2:
         raise ValueError("Unidades y puertos deben ser independientes")
-    if any(a == b or a.is_relative_to(b) or b.is_relative_to(a) for a in paths for b in paths if a != b):
+    if paths[0] == paths[1] or paths[0].is_relative_to(paths[1]) or paths[1].is_relative_to(paths[0]):
         raise ValueError("Los entornos no pueden solaparse")
     if envs["staging"]["service_user"] == envs["production"]["service_user"]:
         raise ValueError("Los entornos requieren identidades de servicio distintas")
