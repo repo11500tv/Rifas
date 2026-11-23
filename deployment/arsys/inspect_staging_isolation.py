@@ -41,7 +41,7 @@ def gunicorn_process(proc):
     )
 
 
-def listener_processes(listeners, expected_group, expected_uid):
+def listener_processes(listeners, expected_group, expected_uid, process_matches=gunicorn_process):
     if not listeners or any(host not in {"127.0.0.1", "::1"} or not pids for host, pids in listeners):
         raise ValueError("El puerto de PRUEBAS no es privado o sus procesos no son visibles")
     rows = {}
@@ -51,7 +51,7 @@ def listener_processes(listeners, expected_group, expected_uid):
         uids = fields["Uid"].split()
         namespace = fields["NSpid"].split()
         if (process_group(proc) != expected_group or not expected_group
-                or not gunicorn_process(proc)
+                or not process_matches(proc)
                 or any(int(uid) != expected_uid for uid in uids)
                 or len(namespace) < 2 or int(namespace[0]) != pid
                 or fields["NoNewPrivs"].strip() != "1" or int(fields["CapEff"], 16)):

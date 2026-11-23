@@ -141,6 +141,9 @@ class Deployment:
             if config["structure"].get("mode") == "arsys-isolated-staging":
                 from deployment.arsys.staging_structure import ArsysStagingStructure
                 structure_class = ArsysStagingStructure
+            elif config["structure"].get("mode") == "arsys-isolated-production":
+                from deployment.arsys.production_structure import ArsysProductionStructure
+                structure_class = ArsysProductionStructure
             self.structure = structure_class(
                 config["structure"], self.root, self.state, self.protected,
                 self.backup_components, stable_profile, self.control_root,
@@ -536,7 +539,7 @@ def main():
             if deployment.structure is None:
                 raise ValueError("El perfil no define comprobaciones estructurales")
             evidence = deployment.structure.evidence(review=True)
-            if deployment.structure.settings.get("mode") == "arsys-isolated-staging":
+            if deployment.structure.settings.get("mode") in {"arsys-isolated-staging", "arsys-isolated-production"}:
                 deployment.structure.service()
                 evidence["writers_observed"] = deployment.structure.writers()
             print(json.dumps(evidence, sort_keys=True))

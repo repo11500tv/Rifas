@@ -18,19 +18,32 @@ MODE = "arsys-isolated-staging"
 
 
 class ArsysStagingStructure(Structure):
+    environment = "staging"
+    application = STAGE
+    control = CONTROL
+    coordinator = COORDINATOR
+    unit_name = UNIT
+    peer_name = "rifas-platform.service"
+    service_port = 8768
+    service_read_only = PROTECTED
+    service_writable = (STAGE,)
+    foreign_root = DOMAIN / "rifas"
+
     def __init__(self, settings, root, state, protected, components, profile, control_root=None):
         super().__init__(settings, root, state, protected, components, profile, control_root)
-        if (profile["environment"] != "staging" or root != STAGE or self.control_root != CONTROL
-                or settings.get("unit") != UNIT or settings.get("peer_unit") != "rifas-platform.service"
-                or self.port != 8768 or self.writable != {STAGE / "central", STAGE / "entidades"}
+        if (profile["environment"] != self.environment or root != self.application or self.control_root != self.control
+                or settings.get("unit") != self.unit_name or settings.get("peer_unit") != self.peer_name
+                or self.port != self.service_port or self.writable != {root / "central", root / "entidades"}
                 or settings.get("writer_groups")):
-            raise ValueError("El modo de aislamiento Arsys solo admite PRUEBAS y sus bases")
+            raise ValueError("El modo de aislamiento Arsys no coincide con el entorno y sus bases")
         self.group = None
 
-    def report(self, action):
+    @classmethod
+    def report(cls, action):
         result = read_report(action.encode("ascii"))
-        if not isinstance(result, dict) or result.get("environment") != "staging" or result.get("unit") != UNIT:
-            raise ValueError("Informe de servicio ajeno a PRUEBAS")
+        if (not isinstance(result, dict) or result.get("environment") != cls.environment
+                or result.get("unit") != cls.unit_name):
+            raise ValueError("Informe de servicio ajeno al entorno")
         return result
 
     def evidence(self, *, review=False):
@@ -40,8 +53,8 @@ class ArsysStagingStructure(Structure):
         status = dict(line.split(":", 1) for line in Path("/proc/self/status").read_text().splitlines() if ":" in line)
         expected_uid = pwd.getpwnam("dealfonsocom").pw_uid
         read_only = (
-            DOMAIN / "rifas", *self.protected, COORDINATOR / "checkout",
-            COORDINATOR / "config", COORDINATOR / "trust",
+            self.foreign_root, *self.protected, self.coordinator / "checkout",
+            self.coordinator / "config", self.coordinator / "trust",
         )
         runtime = Path(self.profile["runtime_python"]).parent.parent
         checks = {
@@ -50,8 +63,8 @@ class ArsysStagingStructure(Structure):
             "rutas_ajenas_y_configuracion_solo_lectura": all(path.exists() and not os.access(path, os.W_OK)
                                                            for path in read_only),
             "estado_y_control_escribibles": all(path.is_dir() and os.access(path, os.W_OK)
-                                                for path in (self.state, CONTROL, *self.writable)),
-            "runtime_seleccionado": (COORDINATOR / "runtime/current").resolve() == runtime,
+                                                for path in (self.state, self.control, *self.writable)),
+            "runtime_seleccionado": (self.coordinator / "runtime/current").resolve() == runtime,
         }
         names = {*self.settings["review_files"], self.profile["allowed_signers"], self.profile["approval_signers"]}
         records = {}
@@ -77,10 +90,11 @@ class ArsysStagingStructure(Structure):
             self.group = None
             return
         report = self.report("isolation-report")
-        expected_mounts = {**{str(path): "ro" for path in PROTECTED}, str(STAGE): "rw"}
+        expected_mounts = {**{str(path): "ro" for path in self.service_read_only},
+                           **{str(path): "rw" for path in self.service_writable}}
         if (report.get("gunicorn_uid") != pwd.getpwnam("dealfonsocom").pw_uid
                 or report.get("mounts") != expected_mounts
-                or report.get("group") != "/system.slice/" + UNIT):
+                or report.get("group") != "/system.slice/" + self.unit_name):
             raise ValueError("El proceso web no acredita el aislamiento de PRUEBAS")
         self.group = report["group"]
 

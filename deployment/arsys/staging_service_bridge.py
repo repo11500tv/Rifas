@@ -57,7 +57,7 @@ def request(action):
     raise ValueError("Falló el control delegado de PRUEBAS")
 
 
-def relay(source, reply, output):
+def relay(source, reply, output, *, service=SERVICE, reports=REPORTS):
     for line in iter(source.readline, b""):
         if not line.startswith(PREFIX):
             output.write(line)
@@ -65,17 +65,17 @@ def relay(source, reply, output):
             continue
         action = line[len(PREFIX):].removesuffix(b"\n")
         result = b"ERROR\n"
-        command = REPORTS.get(action)
+        command = reports.get(action)
         if action in ACTIONS:
-            command = ["/usr/bin/sudo", "-n", SERVICE, action.decode("ascii")]
+            command = ["/usr/bin/sudo", "-n", service, action.decode("ascii")]
         if command is not None and line.endswith(b"\n"):
             try:
                 completed = subprocess.run(
                     command,
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                    timeout=8 if action in REPORTS else 35, check=False,
+                    timeout=8 if action in reports else 35, check=False,
                 )
-                if completed.returncode == 0 and action in REPORTS:
+                if completed.returncode == 0 and action in reports:
                     report = json.loads(completed.stdout)
                     if isinstance(report, dict):
                         encoded = REPORT_PREFIX + json.dumps(report).encode("ascii") + b"\n"
@@ -92,15 +92,15 @@ def relay(source, reply, output):
         reply.flush()
 
 
-def run(args):
+def run(args, *, launcher=LAUNCHER, service=SERVICE, reports=REPORTS):
     if os.geteuid() != pwd.getpwnam("dealfonsocom").pw_uid:
         raise ValueError("Ejecutar el puente de PRUEBAS como dealfonsocom")
     with subprocess.Popen(
-        ["/usr/bin/sudo", "-n", LAUNCHER, *args],
+        ["/usr/bin/sudo", "-n", launcher, *args],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, start_new_session=True,
     ) as process:
         try:
-            relay(process.stdout, process.stdin, sys.stdout.buffer)
+            relay(process.stdout, process.stdin, sys.stdout.buffer, service=service, reports=reports)
         finally:
             process.stdin.close()
         return process.wait()

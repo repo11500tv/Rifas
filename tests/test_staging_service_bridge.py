@@ -60,7 +60,7 @@ class StagingServiceBridgeTests(unittest.TestCase):
     def test_structural_lookup_keeps_the_coordinator_output_pipe(self):
         query = (
             "import json; from deployment.arsys.staging_structure import ArsysStagingStructure; "
-            "print(json.dumps(ArsysStagingStructure.report(None, 'policy-report')))"
+            "print(json.dumps(ArsysStagingStructure.report('policy-report')))"
         )
         report = b'{"environment": "staging", "unit": "rifas-pruebas.service", "policy": "digest"}'
         with subprocess.Popen(
