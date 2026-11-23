@@ -1,5 +1,7 @@
 """Read-only inspection of the running Gunicorn process on Arsys staging."""
 
+import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -54,20 +56,44 @@ def mount_mode(pid, path):
     return "ro" if "ro" in flags else "rw"
 
 
-def inspect():
+def inspect(action="active"):
     expected_uid = pwd.getpwnam("dealfonsocom").pw_uid
     if os.geteuid() not in {0, expected_uid}:
         raise ValueError("Ejecutar la consulta como dealfonsocom o el administrador del servidor")
     observed = unit(UNIT)
-    if (observed.get("ActiveState") != "active" or observed.get("ProtectSystem") != "strict"
+    if (observed.get("ProtectSystem") != "strict"
             or observed.get("NoNewPrivileges") != "yes" or observed.get("KillMode") != "control-group"
             or observed.get("WorkingDirectory") != str(STAGE)):
-        raise ValueError("La unidad activa no coincide con el aislamiento esperado")
+        raise ValueError("La unidad no coincide con el aislamiento esperado")
+    if action == "policy":
+        if command("/usr/bin/systemctl", "show", UNIT, "-p", "NeedDaemonReload", "--value").strip() != "no":
+            raise ValueError("La política de PRUEBAS tiene cambios de systemd sin cargar")
+        peer = unit("rifas-platform.service")
+        policies = []
+        for service in (observed, peer):
+            files = [service["FragmentPath"], *service["DropInPaths"].split()]
+            hashes = {file: managed_file_digest(file) for file in files}
+            static = {key: value for key, value in service.items()
+                      if key not in {"ActiveState", "MainPID", "ControlGroup", "ExecStart"}}
+            policies.append({"settings": static, "files": hashes})
+        helpers = {path: managed_file_digest(path) for path in (
+            "/usr/local/sbin/rifas-pruebas-deploy", "/usr/local/sbin/rifas-pruebas-serve",
+            "/usr/local/sbin/rifas-staging-service", "/usr/local/sbin/rifas-pruebas-observe-writers",
+            "/usr/local/lib/rifas-pruebas/structure.py",
+        )}
+        payload = json.dumps({"unit_policies": policies, "helpers": helpers}, sort_keys=True).encode()
+        return {"environment": "staging", "unit": UNIT, "policy": hashlib.sha256(payload).hexdigest()}
+    listener = Structure({"port": 8768, "writer_observer": ["/usr/bin/false"]}, STAGE,
+                         STAGE / ".rifas-deploy", PROTECTED, [], {}).listeners()
+    if action == "stopped":
+        if observed.get("ActiveState") != "inactive" or observed.get("MainPID") != "0" or listener:
+            raise ValueError("La unidad o el puerto de PRUEBAS siguen activos tras el drenaje")
+        return {"environment": "staging", "unit": UNIT, "stopped": True}
+    if observed.get("ActiveState") != "active":
+        raise ValueError("La unidad de PRUEBAS no está activa")
     launcher = observed.get("MainPID", "")
     if not re.fullmatch(r"[1-9][0-9]*", launcher):
         raise ValueError("No se pudo identificar el lanzador de PRUEBAS")
-    listener = Structure({"port": 8768, "writer_observer": ["/usr/bin/false"]}, STAGE,
-                         STAGE / ".rifas-deploy", PROTECTED, [], {}).listeners()
     processes = listener_processes(listener, observed["ControlGroup"], expected_uid)
     master = next(pid for pid, inner_pid in processes.items() if inner_pid == 1)
     if master == int(launcher) or any(pid == int(launcher) for pid in processes):
@@ -76,8 +102,19 @@ def inspect():
     if modes[str(STAGE)] != "rw" or any(modes[str(path)] != "ro" for path in PROTECTED):
         raise ValueError("PRUEBAS no tiene los permisos de montaje esperados")
     return {"environment": "staging", "unit": UNIT, "gunicorn_uid": expected_uid,
-            "listener_processes": len(processes), "mounts": modes}
+            "listener_processes": len(processes), "mounts": modes, "group": observed["ControlGroup"]}
+
+
+def managed_file_digest(name):
+    path = Path(name)
+    metadata = path.stat()
+    if (not path.is_absolute() or not path.is_file() or path.resolve() != path
+            or metadata.st_uid != 0 or metadata.st_mode & 0o022):
+        raise ValueError(f"Archivo de infraestructura inválido: {name}")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 if __name__ == "__main__":
-    print(json.dumps(inspect(), sort_keys=True))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", nargs="?", default="active", choices=("active", "stopped", "policy"))
+    print(json.dumps(inspect(parser.parse_args().action), sort_keys=True))

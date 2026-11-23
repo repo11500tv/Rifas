@@ -9,6 +9,7 @@ from deployment.backup_integral import atomic_json
 from deployment.deploy import Deployment
 from deployment.hooks import Hooks
 from deployment.arsys.staging_google_checks import BASE_URL, STAGE
+from deployment.arsys.staging_structure import MODE
 
 
 COORDINATOR = Path("/var/www/vhosts/dealfonso.com/rifas-deployment/staging")
@@ -45,7 +46,7 @@ def configuration(profile):
     }
     hook = [*python, "deployment.hooks", "--config", str(HOOKS_FILE)]
     probe = [*python, "deployment.arsys.staging_google_checks"]
-    structure = dict(profile["structure"], expected_fingerprint="REVIEW_REQUIRED",
+    structure = dict(profile["structure"], expected_fingerprint="REVIEW_REQUIRED", mode=MODE,
                      writer_observer=[*bridge, "writer-report"])
     structure["review_files"] = sorted(set(structure.get("review_files", ())) | {str(HOOKS_FILE)})
     updated = dict(

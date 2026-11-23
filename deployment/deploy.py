@@ -137,7 +137,11 @@ class Deployment:
             stable_profile["structure"] = {
                 key: value for key, value in config["structure"].items() if key != "expected_fingerprint"
             }
-            self.structure = Structure(
+            structure_class = Structure
+            if config["structure"].get("mode") == "arsys-isolated-staging":
+                from deployment.arsys.staging_structure import ArsysStagingStructure
+                structure_class = ArsysStagingStructure
+            self.structure = structure_class(
                 config["structure"], self.root, self.state, self.protected,
                 self.backup_components, stable_profile, self.control_root,
             )
@@ -531,7 +535,11 @@ def main():
         elif args.command == "structure":
             if deployment.structure is None:
                 raise ValueError("El perfil no define comprobaciones estructurales")
-            print(json.dumps(deployment.structure.evidence(review=True), sort_keys=True))
+            evidence = deployment.structure.evidence(review=True)
+            if deployment.structure.settings.get("mode") == "arsys-isolated-staging":
+                deployment.structure.service()
+                evidence["writers_observed"] = deployment.structure.writers()
+            print(json.dumps(evidence, sort_keys=True))
         elif args.command == "status":
             result = deployment.status()
             if args.verify_service_bridge:

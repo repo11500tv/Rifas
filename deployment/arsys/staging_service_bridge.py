@@ -14,6 +14,8 @@ SERVICE = "/usr/local/sbin/rifas-staging-service"
 WRITERS = "/usr/local/sbin/rifas-pruebas-observe-writers"
 REPORTS = {
     b"isolation-report": [sys.executable, "-B", "-m", "deployment.arsys.inspect_staging_isolation"],
+    b"stopped-report": [sys.executable, "-B", "-m", "deployment.arsys.inspect_staging_isolation", "stopped"],
+    b"policy-report": [sys.executable, "-B", "-m", "deployment.arsys.inspect_staging_isolation", "policy"],
     b"writer-report": ["/usr/bin/sudo", "-n", WRITERS],
 }
 REPORT_PREFIX = b"REPORT "
@@ -55,7 +57,7 @@ def relay(source, reply, output):
                 completed = subprocess.run(
                     command,
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                    timeout=35, check=False,
+                    timeout=8 if action in REPORTS else 35, check=False,
                 )
                 if completed.returncode == 0 and action in REPORTS:
                     report = json.loads(completed.stdout)
