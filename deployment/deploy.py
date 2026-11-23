@@ -380,6 +380,11 @@ class Deployment:
 
     def recover_pending(self, journal):
         phase = journal["phase"]
+        if journal.get("external_snapshot"):
+            backup_external.assert_external_unchanged(
+                self.name, self.state / "runs" / journal["run"] / "backup-external",
+                self.installation_manifest,
+            )
         if phase in {"committed", "rolled_back"}:
             self.finish(journal)
             return
@@ -390,8 +395,6 @@ class Deployment:
         self.hook("drain", self.hooks["drain"], previous)
         if phase == "changing":
             self.check_operation(drained=True)
-            if journal.get("external_snapshot"):
-                backup_external.verify_external(self.state / "runs" / journal["run"] / "backup-external")
             snapshot.restore(
                 self.root, previous, journal["components"], [Path(path) for path in journal["databases"]],
                 self.state / "runs" / journal["run"] / "backup", journal["snapshot"], self.event,
@@ -491,6 +494,10 @@ class Deployment:
                 self.hook("activate", self.hooks["activate"], payload)
                 self.hook("ready", self.hooks["ready"], payload)
                 self.check_operation()
+                if journal.get("external_snapshot"):
+                    backup_external.assert_external_unchanged(
+                        self.name, folder / "backup-external", self.installation_manifest,
+                    )
                 for check in manifest["checks"]:
                     self.hook(f"package:{check}", self.checks[check], payload)
             except Exception as error:
@@ -499,6 +506,10 @@ class Deployment:
                 finally:
                     self.recover_pending(json.loads(self.pending.read_text()))
                 raise
+            if journal.get("external_snapshot"):
+                backup_external.assert_external_unchanged(
+                    self.name, folder / "backup-external", self.installation_manifest,
+                )
             self.checkpoint(journal, "committed")
             self.finish(journal)
             return fingerprint
