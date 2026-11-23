@@ -1,11 +1,10 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Control privilegiado mínimo de un servicio systemd autorizado.
 
 Instalar root:root 0755 en una ruta protegida, FUERA del árbol modificable
 por el usuario de la aplicación. No recibe nombres de servicios ni rutas
 del solicitante. Configuración de unidad fijada por el administrador.
 """
-import os
 import subprocess
 import sys
 
