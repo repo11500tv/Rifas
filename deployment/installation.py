@@ -64,3 +64,37 @@ def load_installation(filename):
     if envs["staging"]["service_user"] == envs["production"]["service_user"]:
         raise ValueError("Los entornos requieren identidades de servicio distintas")
     return data
+
+def validate_deployment_profile(profile):
+    """Bind a deployment profile to its declared installation (fail closed).
+
+    Optional for historical profiles; mandatory for newly provisioned profiles.
+    This check does not grant permission to deploy or replace structural review.
+    """
+    manifest_path = profile.get("installation_manifest")
+    if manifest_path is None:
+        return None
+    installation = load_installation(manifest_path)
+    environment = profile.get("environment")
+    if environment not in installation["environments"]:
+        raise ValueError("Entorno ajeno al manifiesto de instalación")
+    declared = installation["environments"][environment]
+    if Path(profile.get("data_root", "")) != Path(declared["root"]):
+        raise ValueError("Raíz de despliegue diferente del manifiesto")
+    structure = profile.get("structure")
+    if not isinstance(structure, dict):
+        raise ValueError("El manifiesto requiere revisión estructural")
+    for field, expected in (
+        ("unit", declared["unit"]),
+        ("port", declared["port"]),
+        ("working_directory", declared["root"]),
+    ):
+        if structure.get(field) != expected:
+            raise ValueError(f"Desajuste estructural en {field}")
+    if structure.get("peer_unit") != installation["environments"][
+        "production" if environment == "staging" else "staging"
+    ]["unit"]:
+        raise ValueError("Unidad par distinta del manifiesto")
+    if not profile.get("control_root"):
+        raise ValueError("Falta el directorio de control")
+    return installation
