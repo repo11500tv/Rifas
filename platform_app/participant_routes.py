@@ -100,13 +100,15 @@ def login(slug):
     access_url = url_for(
         'participant_access_v2.request_code', slug=slug
     )
-    register_url = url_for(
-        'participants.register' if google_enabled() else 'participant_registration_v2.registration_form', slug=slug
-    )
     google_access = ''
     if google_enabled():
         google_url = url_for("participant_google_oidc.start_google_login", slug=slug)
-        google_access = f'<p><a href="{google_url}">Acceder con Google</a></p>'
+        google_access = (
+            f'<p><a href="{google_url}" '
+            'style="display:block;padding:13px;border:1px solid #17365a;'
+            'border-radius:7px;text-decoration:none">'
+            'Acceder con Google</a></p>'
+        )
 
     body = (
         '<div class="card" style="text-align:center">'
@@ -118,10 +120,6 @@ def login(slug):
         'style="display:block;padding:13px;background:#17365a;'
         'color:white;border-radius:7px;text-decoration:none">'
         'Acceder con código por correo</a></p>'
-        f'<p><a href="{register_url}" '
-        'style="display:block;padding:13px;border:1px solid #17365a;'
-        'border-radius:7px;text-decoration:none">'
-        'Nuevo participante</a></p>'
         '</div>'
     )
     return layout('Participantes · ' + ent['name'], body)

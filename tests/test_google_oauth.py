@@ -81,6 +81,21 @@ class GoogleOAuthTest(unittest.TestCase):
     def path(self, slug):
         return self.entities / slug / "data" / "rifas.sqlite3"
 
+    def test_access_shows_google_button_and_leaves_registration_on_portal(self):
+        self.migrate()
+        for enabled in (False, True):
+            with self.subTest(google=enabled):
+                client = self.app(enabled=enabled).test_client()
+                access = client.get("/e/alpha/participantes/acceso").get_data(as_text=True)
+                self.assertIn("Acceder con código por correo", access)
+                self.assertNotIn("Nuevo participante", access)
+                if enabled:
+                    self.assertRegex(access, r'<a href="[^"]+/google/iniciar" style="display:block;[^"]+">Acceder con Google</a>')
+                else:
+                    self.assertNotIn("Acceder con Google", access)
+                portal = client.get("/e/alpha/").get_data(as_text=True)
+                self.assertIn("Nuevo participante", portal)
+
     def migrate(self):
         contract = self.contract
         expected = schema.expected_schema(PROJECT, contract)
