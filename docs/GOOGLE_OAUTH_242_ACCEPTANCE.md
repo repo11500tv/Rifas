@@ -1,7 +1,7 @@
 # Criterios funcionales para liberar Google OAuth 2.4.2
 
 ## Objetivo de producto
-Permitir que participantes se registren y accedan con Google en una entidad concreta sin perder el acceso alternativo por código de correo. Mantener saldos, reservas y operaciones separados por entidad.
+Permitir que participantes se registren y accedan con Google en una entidad concreta sin perder el acceso alternativo por código de correo. Mantener saldos, compras directas de números y operaciones separados por entidad. No existen reservas temporales de números.
 
 ## Confirmado en código (no equivale a prueba con Google real)
 - El paquete declara módulo `google_oidc` versión 2.4.2 y conserva la versión general de plataforma 2.3.1.
@@ -15,7 +15,7 @@ Permitir que participantes se registren y accedan con Google en una entidad conc
 3. Móvil: exigir número durante el registro, mantener `phone_verified=0` y no enviar SMS. La verificación de titularidad por SMS es una fase comercial futura, no un requisito de lanzamiento.
 4. Seguridad: evitar asociación automática de cuentas solo por coincidencia de correo; proteger contra replay, cambio de entidad y callback inválido.
 5. Migraciones: plantilla maestra y entidades existentes con mismo esquema y versión.
-6. Compatibilidad: confirmar que sorteos, reservas, créditos y Bizum no sufren regresiones.
+6. Compatibilidad: confirmar que sorteos, compras directas de números con créditos, recargas y confirmación administrativa de Bizum no sufren regresiones. Ningún número se reserva temporalmente.
 7. Infraestructura: desplegar solo con autorización, aislamiento de staging y procedimiento único de reversión.
 
 ## Puerta de salida
