@@ -500,16 +500,16 @@ class Deployment:
                     )
                 for check in manifest["checks"]:
                     self.hook(f"package:{check}", self.checks[check], payload)
+                if journal.get("external_snapshot"):
+                    backup_external.assert_external_unchanged(
+                        self.name, folder / "backup-external", self.installation_manifest,
+                    )
             except Exception as error:
                 try:
                     self.event("failed", run=run, error=type(error).__name__)
                 finally:
                     self.recover_pending(json.loads(self.pending.read_text()))
                 raise
-            if journal.get("external_snapshot"):
-                backup_external.assert_external_unchanged(
-                    self.name, folder / "backup-external", self.installation_manifest,
-                )
             self.checkpoint(journal, "committed")
             self.finish(journal)
             return fingerprint
