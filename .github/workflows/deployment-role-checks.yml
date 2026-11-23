@@ -5,6 +5,8 @@ on:
     branches:
       - feature/google-oauth-242
     paths:
+      - deployment/authorization_policy.py
+      - tests/test_authorization_policy.py
       - deployment/role_check.py
       - tests/test_role_check.py
       - tests/test_staging_selector_permissions.py
@@ -27,6 +29,7 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: |
-          python -B -m py_compile deployment/role_check.py tests/test_role_check.py tests/test_staging_selector_permissions.py
+          python -B -m py_compile deployment/authorization_policy.py tests/test_authorization_policy.py deployment/role_check.py tests/test_role_check.py tests/test_staging_selector_permissions.py
+          python -B -m unittest discover -s tests -p 'test_authorization_policy.py' -v
           python -B -m unittest discover -s tests -p 'test_role_check.py' -v
           python -B -m unittest discover -s tests -p 'test_staging_selector_permissions.py' -v
