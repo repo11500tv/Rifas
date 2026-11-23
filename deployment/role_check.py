@@ -28,6 +28,8 @@ def _writable_directory(path):
 def check(settings, role):
     if os.geteuid() == 0:
         raise ValueError("No ejecutar esta verificación como root")
+    if role not in ("owner", "service"):
+        raise ValueError("Rol desconocido")
     scope = settings["scope"]
     data = _path(scope["data_root"])
     control = _path(scope["control_root"])
@@ -39,6 +41,14 @@ def check(settings, role):
         raise ValueError("Barrera y selector deben pertenecer al control de su entorno")
     if data == control or data.is_relative_to(control) or control.is_relative_to(data):
         raise ValueError("Control y datos no pueden solaparse")
+    identities = settings.get("identities")
+    if not isinstance(identities, dict) or not all(isinstance(identities.get(key), int) and not isinstance(identities[key], bool) and identities[key] > 0 for key in ("owner_uid", "service_uid")):
+        raise ValueError("Declarar identidades owner_uid y service_uid positivas en el perfil")
+    if identities["owner_uid"] == identities["service_uid"]:
+        raise ValueError("El propietario y el servicio web no pueden compartir UID")
+    expected = identities["owner_uid" if role == "owner" else "service_uid"]
+    if os.geteuid() != expected:
+        raise ValueError("La identidad de ejecución no corresponde al rol declarado")
     failures = []
     def require(ok, message):
         if not ok:
@@ -60,8 +70,6 @@ def check(settings, role):
     elif role == "owner":
         require(_writable_directory(data), "El propietario no puede mantener los datos")
         require(_writable_directory(control), "El propietario no puede actualizar el control")
-    else:
-        raise ValueError("Rol desconocido")
     return failures
 
 
