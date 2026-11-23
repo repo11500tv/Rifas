@@ -11,7 +11,7 @@ def _absolute(value, field):
     if not isinstance(value, str) or not value.startswith("/"):
         raise ValueError(f"{field} debe ser una ruta absoluta")
     path = Path(value)
-    if str(path) != value or ".." in path.parts or path == Path("/"):
+    if str(path) != value or ".." in path.parts or "." in value.split("/") or path == Path("/") or path.is_relative_to("/root"):
         raise ValueError(f"{field} no es una ruta canónica")
     return path
 
@@ -53,10 +53,19 @@ def load_installation(filename):
             raise ValueError("Puerto inválido")
         ports.append(config["port"])
         files = config["external_files"]
-        if not isinstance(files, list) or not files or len(files) != len(set(map(str, files))):
+        if (not isinstance(files, list) or not files
+                or any(not isinstance(item, str) for item in files)
+                or len(files) != len(set(files))):
             raise ValueError("Inventario externo vacío o duplicado")
         for entry in files:
-            _absolute(entry, "external_files")
+            external = _absolute(entry, "external_files")
+            if any(external == root or external.is_relative_to(root) for root in paths):
+                raise ValueError("Un archivo externo no puede estar dentro de la raíz de un entorno")
+    for env in envs.values():
+        for entry in env["external_files"]:
+            external = Path(entry)
+            if any(external == root or external.is_relative_to(root) for root in paths):
+                raise ValueError("Archivo externo dentro de una raíz gestionada")
     if len(set(units)) != 2 or len(set(ports)) != 2:
         raise ValueError("Unidades y puertos deben ser independientes")
     if paths[0] == paths[1] or paths[0].is_relative_to(paths[1]) or paths[1].is_relative_to(paths[0]):
@@ -97,4 +106,8 @@ def validate_deployment_profile(profile):
         raise ValueError("Unidad par distinta del manifiesto")
     if not profile.get("control_root"):
         raise ValueError("Falta el directorio de control")
+    control = _absolute(profile["control_root"], "control_root")
+    roots = [Path(item["root"]) for item in installation["environments"].values()]
+    if any(control == root or control.is_relative_to(root) or root.is_relative_to(control) for root in roots):
+        raise ValueError("El control no puede solaparse con las raíces de los entornos")
     return installation
