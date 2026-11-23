@@ -7,7 +7,7 @@ on:
   pull_request:
     paths:
       - 'deployment/**'
-      - 'tests/test_portability.py'
+      - 'tests/test_*.py'
       - '.github/workflows/portability.yml'
   workflow_dispatch:
 
@@ -26,6 +26,8 @@ jobs:
         with:
           python-version: '3.12'
       - name: Check syntax
-        run: python -m compileall -q deployment tests/test_portability.py
+        run: python -m compileall -q deployment tests
       - name: Run portability suite
-        run: python -m unittest discover -s tests -p 'test_portability.py' -v\n      - name: Run synthetic recovery safety tests\n        run: python -m unittest discover -s tests -p 'test_recovery_safety.py' -v
+        run: python -m unittest discover -s tests -p 'test_portability.py' -v
+      - name: Run synthetic recovery safety tests
+        run: python -m unittest discover -s tests -p 'test_recovery_safety.py' -v
