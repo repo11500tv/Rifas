@@ -150,5 +150,23 @@ class PortableInstallationTests(unittest.TestCase):
             verify_external(dest)
 
 
+    def test_external_drift_detected(self):
+        from deployment.backup_external import assert_external_unchanged
+        self.load()
+        dest = self.base / "backup"
+        backup_external("staging", dest, self.manifest)
+        self.assertTrue(assert_external_unchanged("staging", dest, self.manifest))
+        self.external.write_text("unit=changed\\n")
+        with self.assertRaises(RuntimeError):
+            assert_external_unchanged("staging", dest, self.manifest)
+
+    def test_external_backup_wrong_environment_rejected(self):
+        from deployment.backup_external import assert_external_unchanged
+        self.load()
+        dest = self.base / "backup"
+        backup_external("staging", dest, self.manifest)
+        with self.assertRaises(RuntimeError):
+            assert_external_unchanged("production", dest, self.manifest)
+
 if __name__ == "__main__":
     unittest.main()
