@@ -11,6 +11,7 @@ on:
       - 'deployment/packages/google_oauth_2.4.2.json'
       - 'tests/test_google_oauth.py'
       - 'tests/test_direct_purchases.py'
+      - 'tests/test_bizum_approval.py'
       - 'requirements-google.txt'
       - '.github/workflows/google-oauth.yml'
   workflow_dispatch:
@@ -38,3 +39,5 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_google_oauth.py' -v
       - name: Run direct purchase and rollback tests
         run: python -m unittest discover -s tests -p 'test_direct_purchases.py' -v
+      - name: Run Bizum approval and credit integrity tests
+        run: python -m unittest discover -s tests -p 'test_bizum_approval.py' -v
