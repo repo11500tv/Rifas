@@ -8,7 +8,8 @@ import pwd
 import re
 
 from deployment.arsys.inspect_staging_isolation import DOMAIN, PROTECTED, STAGE, UNIT
-from deployment.structure import Structure, checked_path, command
+from deployment.arsys.staging_service_bridge import read_report
+from deployment.structure import Structure, checked_path
 
 
 CONTROL = Path("/var/lib/rifas-pruebas-control")
@@ -27,7 +28,7 @@ class ArsysStagingStructure(Structure):
         self.group = None
 
     def report(self, action):
-        result = json.loads(command(*self.observer[:-1], action))
+        result = read_report(action.encode("ascii"))
         if not isinstance(result, dict) or result.get("environment") != "staging" or result.get("unit") != UNIT:
             raise ValueError("Informe de servicio ajeno a PRUEBAS")
         return result
@@ -84,7 +85,7 @@ class ArsysStagingStructure(Structure):
         self.group = report["group"]
 
     def writers(self, *, drained=False):
-        report = json.loads(command(*self.observer))
+        report = read_report(b"writer-report")
         if report.get("complete") is not True or report.get("paths") != sorted(map(str, self.writable)):
             raise ValueError("Visibilidad incompleta de los escritores de PRUEBAS")
         rows = report["writers"]

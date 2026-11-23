@@ -57,6 +57,24 @@ class StagingServiceBridgeTests(unittest.TestCase):
         self.assertEqual(control.call_args.args[0], ["/usr/bin/sudo", "-n", bridge.WRITERS])
         self.assertEqual(reply.getvalue(), bridge.REPORT_PREFIX + report + b"\n")
 
+    def test_structural_lookup_keeps_the_coordinator_output_pipe(self):
+        query = (
+            "import json; from deployment.arsys.staging_structure import ArsysStagingStructure; "
+            "print(json.dumps(ArsysStagingStructure.report(None, 'policy-report')))"
+        )
+        report = b'{"environment": "staging", "unit": "rifas-pruebas.service", "policy": "digest"}'
+        with subprocess.Popen(
+            [sys.executable, "-B", "-c", query], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        ) as child:
+            output = io.BytesIO()
+            with patch.object(
+                bridge.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, report)
+            ) as host:
+                bridge.relay(child.stdout, child.stdin, output)
+            self.assertEqual(child.wait(timeout=3), 0)
+        self.assertEqual(host.call_args.args[0], bridge.REPORTS[b"policy-report"])
+        self.assertEqual(output.getvalue(), report + b"\n")
+
     def test_invalid_writer_report_is_not_passed_to_the_coordinator(self):
         for report in (b"not json", b"[]", b'{"too_large":"' + b"x" * bridge.MAX_REPLY + b'"}'):
             with self.subTest(length=len(report)):

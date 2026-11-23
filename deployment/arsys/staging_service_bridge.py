@@ -3,6 +3,7 @@
 import json
 import os
 import pwd
+import select
 import subprocess
 import sys
 
@@ -22,18 +23,33 @@ REPORT_PREFIX = b"REPORT "
 MAX_REPLY = 65536
 
 
-def request(action):
+def exchange(action):
     if (action not in ACTIONS and action not in REPORTS) or sys.stdin.isatty() or sys.stdout.isatty():
         raise ValueError("El control de PRUEBAS requiere el puente del coordinador")
     sys.stdout.buffer.write(PREFIX + action + b"\n")
     sys.stdout.buffer.flush()
+    if not select.select([sys.stdin.buffer], [], [], 45 if action in ACTIONS else 12)[0]:
+        raise ValueError(f"Sin respuesta del puente de PRUEBAS: {action.decode('ascii')}")
     reply = sys.stdin.buffer.readline(MAX_REPLY + 1)
+    return reply
+
+
+def read_report(action):
+    if action not in REPORTS:
+        raise ValueError("Informe de PRUEBAS no permitido")
+    reply = exchange(action)
     if action in REPORTS and reply.startswith(REPORT_PREFIX) and reply.endswith(b"\n") and len(reply) <= MAX_REPLY:
         report = json.loads(reply[len(REPORT_PREFIX):])
-        if not isinstance(report, dict):
-            raise ValueError("Informe inválido del puente de PRUEBAS")
-        print(json.dumps(report))
+        if isinstance(report, dict):
+            return report
+    raise ValueError(f"No se pudo obtener el informe de PRUEBAS: {action.decode('ascii')}")
+
+
+def request(action):
+    if action in REPORTS:
+        print(json.dumps(read_report(action)))
         return 0
+    reply = exchange(action)
     if reply == b"OK\n":
         return 0
     if reply == b"INACTIVE\n" and action == b"status":
