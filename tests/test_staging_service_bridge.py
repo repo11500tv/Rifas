@@ -1,0 +1,48 @@
+import io
+import subprocess
+import sys
+import unittest
+from unittest.mock import patch
+
+from deployment.arsys import staging_service_bridge as bridge
+
+
+class StagingServiceBridgeTests(unittest.TestCase):
+    def test_request_crosses_pipes_and_uses_fixed_staging_executable(self):
+        with subprocess.Popen(
+            [sys.executable, "-B", "-m", "deployment.arsys.staging_service_bridge", "request", "stop"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+        ) as child:
+            with patch.object(
+                bridge.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"")
+            ) as control:
+                bridge.relay(child.stdout, child.stdin, io.BytesIO())
+            self.assertEqual(child.wait(timeout=3), 0)
+        self.assertEqual(control.call_args.args[0], ["/usr/bin/sudo", "-n", bridge.SERVICE, "stop"])
+
+    def test_request_for_another_service_is_rejected_without_running_sudo(self):
+        request = bridge.PREFIX + b"stop rifas-platform.service\n"
+        reply = io.BytesIO()
+        output = io.BytesIO()
+        with patch.object(bridge.subprocess, "run") as control:
+            bridge.relay(io.BytesIO(b"normal output\n" + request), reply, output)
+        control.assert_not_called()
+        self.assertEqual(reply.getvalue(), b"ERROR\n")
+        self.assertEqual(output.getvalue(), b"normal output\n")
+
+    def test_status_distinguishes_inactive_from_unknown(self):
+        for stdout, expected in ((b"inactive\n", b"INACTIVE\n"), (b"unknown\n", b"ERROR\n")):
+            with self.subTest(stdout=stdout):
+                reply = io.BytesIO()
+                with patch.object(
+                    bridge.subprocess, "run", return_value=subprocess.CompletedProcess([], 3, stdout)
+                ):
+                    bridge.relay(io.BytesIO(bridge.PREFIX + b"status\n"), reply, io.BytesIO())
+                self.assertEqual(reply.getvalue(), expected)
+
+    def test_timeout_returns_failure_to_the_hook(self):
+        reply = io.BytesIO()
+        with patch.object(bridge.subprocess, "run", side_effect=subprocess.TimeoutExpired("sudo", 35)):
+            bridge.relay(io.BytesIO(bridge.PREFIX + b"start\n"), reply, io.BytesIO())
+        self.assertEqual(reply.getvalue(), b"ERROR\n")
