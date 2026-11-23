@@ -1,0 +1,32 @@
+name: Deployment role checks
+
+on:
+  push:
+    branches:
+      - feature/google-oauth-242
+    paths:
+      - deployment/role_check.py
+      - tests/test_role_check.py
+      - tests/test_staging_selector_permissions.py
+      - deployment/hooks.py
+      - .github/workflows/deployment-role-checks.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  role-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile and run deployment permission tests
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          python -B -m py_compile deployment/role_check.py tests/test_role_check.py tests/test_staging_selector_permissions.py
+          python -B -m unittest discover -s tests -p 'test_role_check.py' -v
+          python -B -m unittest discover -s tests -p 'test_staging_selector_permissions.py' -v
