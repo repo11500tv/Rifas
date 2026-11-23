@@ -132,7 +132,7 @@ def main():
             or any(show(p) for p in ("DropInPaths", "ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost",
                                     "EnvironmentFiles", "PassEnvironment"))):
         raise ValueError("El arranque efectivo de PRODUCCIÓN difiere del observado")
-    if any(not re.fullmatch(r"(?:RIFAS_[A-Z0-9_]+|GOOGLE_[A-Z0-9_]+|PYTHONUNBUFFERED|PYTHONDONTWRITEBYTECODE)=.*", entry)
+    if any(not re.fullmatch(r"(?:RIFAS_[A-Z0-9_]+|GOOGLE_[A-Z0-9_]+|PYTHONUNBUFFERED|PYTHONDONTWRITEBYTECODE|HTTPS_ONLY)=.*", entry)
            for entry in shlex.split(show("Environment"))):
         raise ValueError("La unidad de PRODUCCIÓN contiene variables que requieren revisión")
     for url, expected in ((PRIVATE, "200"), (PUBLIC, "200"), (STAGING, "401")):
