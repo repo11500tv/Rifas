@@ -34,3 +34,20 @@ Los diagnósticos e instaladores temporales previamente depositados en la raíz 
 ## Estado final
 
 **No desplegado.** Google OAuth 2.4.2 no está activo en staging. Checkout y directorios de control preparados; integración de servicio/proxy/firmas, aislamiento y recuperación pendientes. La comprobación de lectura no sustituye una prueba de recuperación.
+
+
+## Modelo de responsabilidades y privilegios (criterio del propietario, 23-11-2026)
+
+**Principio obligatorio para cualquier dominio de destino:** separar al administrador del servidor (root o equivalente) del propietario/gestor del dominio y de los administradores de entidades. El propietario del dominio debe controlar y autorizar el ciclo de vida de la aplicación sin acceso root habitual.
+
+- **Administrador del servidor:** aprovisionamiento inicial y cambios de infraestructura que exijan privilegios (usuario/cuenta del dominio, aislamiento Unix, servicio o supervisor, proxy/TLS, permisos de sistema y delegaciones restringidas). Debe poder entregar una instalación preparada sin conservar tareas de actualización ordinaria.
+- **Propietario del dominio:** configuración y secretos propios de Rifas, administración superior, autorización de despliegues, instalación de versiones verificadas, migraciones, respaldos y restauración de datos de la aplicación, y mantenimiento ordinario mediante un coordinador único ejecutado con su identidad delegada. Sus privilegios no se extienden a otros dominios.
+- **Administrador de entidad:** únicamente funciones de su entidad, sin acceso al sistema operativo, al coordinador ni a los datos de otras entidades.
+- **Servicio web/Gunicorn:** identidad de ejecución con permisos mínimos, sin capacidad de alterar artefactos, aprobaciones, código confiable, controles del despliegue ni datos de otros entornos.
+- **Cambios privilegiados posteriores:** se documentan como solicitudes concretas al administrador del servidor; no se resuelven exigiendo root al propietario del dominio ni ampliando sudo de forma general.
+
+**Implicaciones para la integración pendiente:** el directorio root 0700 actualmente previsto para `control` no puede ser el único punto de lectura de `release.json` para Gunicorn. Rediseñar el selector con separación de permisos: el coordinador autorizado por el propietario escribe de forma atómica en una ubicación operativa protegida; el servicio solo lee lo imprescindible. Los perfiles, autorizaciones y firmas deben permanecer fuera de escritura del proceso web. No solucionar mediante chmod indiscriminado ni ejecutar el coordinador como root. Separar también staging y producción a nivel de identidades/permisos antes del despliegue.
+
+**Criterio de aceptación reutilizable:** una vez terminado el aprovisionamiento, demostrar en pruebas que el propietario del dominio puede ejecutar `plan`, aprobar y aplicar una actualización de staging, realizar respaldo y recuperación sin root, mientras Gunicorn no puede alterar el control y staging no puede escribir en producción. Cualquier excepción debe quedar documentada como tarea de infraestructura para el administrador del servidor.
+
+Este apartado es especificación de arquitectura, no autorización para alterar servicios o permisos en Arsys.
