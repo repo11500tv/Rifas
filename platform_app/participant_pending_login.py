@@ -82,7 +82,8 @@ def finish_pending_login(session, slug, participant_id):
         return False
 
     # Replace only the participant identity, retaining other authenticated roles.
-    clear_pending_login(session)
+    from platform_app.participant_session_shared import clear_participant_flows
+    clear_participant_flows(session)
     session["participant_slug"] = slug
     session["participant_id"] = participant_id
     session["_activity_participant"] = int(time.time())

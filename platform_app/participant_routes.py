@@ -4,7 +4,7 @@ from functools import wraps
 from html import escape
 
 from flask import (
-    Blueprint, abort, redirect, request,
+    Blueprint, abort, current_app, redirect, request,
     session, url_for
 )
 
@@ -20,6 +20,10 @@ bp = Blueprint(
     __name__,
     url_prefix="/e/<slug>/participantes"
 )
+
+
+def google_enabled():
+    return "participant_google_oauth" in current_app.extensions
 
 
 def active_entity(slug):
@@ -66,12 +70,16 @@ def member_only(fn):
 
 @bp.get("/registro")
 def register(slug):
-    active_entity(slug)
-    return redirect(
-        url_for(
-            "participant_registration_v2.registration_form",
-            slug=slug
-        )
+    entity = active_entity(slug)
+    email = url_for("participant_registration_v2.registration_form", slug=slug)
+    if not google_enabled():
+        return redirect(email)
+    google = url_for("participant_google_registration.begin", slug=slug)
+    return layout(
+        "Registro de participantes · " + entity["name"],
+        f'<div class="card"><h2>Nuevo participante</h2>'
+        f'<p><a href="{google}">Registrarse con Google</a></p>'
+        f'<p><a href="{email}">Registrarse por correo</a></p></div>',
     )
 
 
@@ -93,18 +101,23 @@ def login(slug):
         'participant_access_v2.request_code', slug=slug
     )
     register_url = url_for(
-        'participant_registration_v2.registration_form', slug=slug
+        'participants.register' if google_enabled() else 'participant_registration_v2.registration_form', slug=slug
     )
+    google_access = ''
+    if google_enabled():
+        google_url = url_for("participant_google_oidc.start_google_login", slug=slug)
+        google_access = f'<p><a href="{google_url}">Acceder con Google</a></p>'
 
     body = (
         '<div class="card" style="text-align:center">'
         + logo +
         '<h2>Acceso de participantes</h2>'
         '<p>Selecciona una opción para continuar.</p>'
+        + google_access +
         f'<p><a href="{access_url}" '
         'style="display:block;padding:13px;background:#17365a;'
         'color:white;border-radius:7px;text-decoration:none">'
-        'Acceso a participantes</a></p>'
+        'Acceder con código por correo</a></p>'
         f'<p><a href="{register_url}" '
         'style="display:block;padding:13px;border:1px solid #17365a;'
         'border-radius:7px;text-decoration:none">'
@@ -161,6 +174,16 @@ def account(slug):
             url_for(endpoint, slug=slug),
             quote=True
         )
+
+    google_options = ""
+    if google_enabled():
+        for purpose, label in (("link", "Vincular Google"), ("replace", "Cambiar cuenta Google")):
+            url = url_for("participant_google_binding.start", slug=slug, purpose=purpose)
+            google_options += (
+                f'<form method="post" action="{url}">'
+                f'<input type="hidden" name="_csrf" value="{escape(str(token()), quote=True)}">'
+                f'<button type="submit">{label}</button></form>'
+            )
 
     body = (
         '<style>'
@@ -233,6 +256,7 @@ def account(slug):
 
         '<div class="card">'
         '<h3>Opciones de cuenta</h3>'
+        + google_options +
         '<p>Las solicitudes de baja se habilitaran '
         'con verificacion de seguridad.</p>'
         '<form method="post" action="' +
@@ -253,11 +277,13 @@ def account(slug):
 @bp.post("/salir")
 @member_only
 def logout(slug):
+    from platform_app.participant_session_shared import clear_participant_flows
+    clear_participant_flows(session)
     session.pop("participant_slug", None)
     session.pop("participant_id", None)
     return redirect(
         url_for(
-            "participant_access_v2.request_code",
+            "participants.login" if google_enabled() else "participant_access_v2.request_code",
             slug=slug
         )
     )

@@ -12,6 +12,7 @@ NAMESPACE = "rifas-deploy-v1"
 IDENTITY = "rifas-release"
 MANIFEST = "manifest.json"
 SIGNATURE = "manifest.json.sig"
+REQUIREMENTS_NAME = r"requirements-[a-z0-9][a-z0-9-]*\.txt"
 
 
 def git(repository, *arguments):
@@ -40,7 +41,7 @@ def payload_path(name):
     path = PurePosixPath(name)
     if str(path) != name or any(part in (".", "..") for part in path.parts):
         raise ValueError(f"Ruta de artefacto inválida: {name}")
-    if name != "wsgi.py" and (
+    if name != "wsgi.py" and not re.fullmatch(REQUIREMENTS_NAME, name) and (
         not name.startswith("platform_app/") or path.suffix not in (".py", ".html")
     ):
         raise ValueError(f"Ruta de artefacto no autorizada: {name}")
@@ -67,10 +68,18 @@ def build(repository, commit, recipe_path, output):
     if recipe_path.parent != PurePosixPath("deployment/packages") or recipe_path.suffix != ".json":
         raise ValueError("La receta debe estar en deployment/packages")
     recipe = json.loads(git(repository, "show", f"{commit}:{recipe_path}"))
-    if set(recipe) != {"package", "version", "platform_from", "platform_to", "schema", "migration", "checks"}:
+    fields = {"package", "version", "platform_from", "platform_to", "schema", "migration", "checks"}
+    if set(recipe) - {"requirements"} != fields:
         raise ValueError("Receta inválida")
     files = {}
-    entries = git(repository, "ls-tree", "-rz", commit, "--", "platform_app", "wsgi.py")
+    requirements = recipe.get("requirements")
+    if "requirements" in recipe and (not isinstance(requirements, str)
+                                     or not re.fullmatch(REQUIREMENTS_NAME, requirements)):
+        raise ValueError("Archivo de dependencias inválido")
+    paths = ["platform_app", "wsgi.py"]
+    if requirements:
+        paths.append(requirements)
+    entries = git(repository, "ls-tree", "-rz", commit, "--", *paths)
     for entry in entries.rstrip(b"\0").split(b"\0"):
         metadata, name = entry.decode().split("\t", 1)
         mode, kind, object_id = metadata.split()
@@ -78,6 +87,8 @@ def build(repository, commit, recipe_path, output):
             raise ValueError(f"Entrada Git no regular: {name}")
         payload_path(name)
         files[name] = git(repository, "cat-file", "blob", object_id)
+    if requirements and requirements not in files:
+        raise ValueError("Falta el archivo de dependencias")
     if "wsgi.py" not in files or platform_version(files["platform_app/__init__.py"]) != recipe["platform_to"]:
         raise ValueError("Código incompatible con la receta")
     manifest = {

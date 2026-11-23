@@ -1,0 +1,46 @@
+name: Google OAuth 2.4.2 functional tests
+
+on:
+  push:
+    branches:
+      - feature/google-oauth-242
+      - feature/portable-installation
+  pull_request:
+    paths:
+      - 'platform_app/**'
+      - 'deployment/packages/google_oauth_2.4.2.json'
+      - 'tests/test_google_oauth.py'
+      - 'tests/test_direct_purchases.py'
+      - 'tests/test_bizum_approval.py'
+      - 'tests/test_bizum_to_purchase.py'
+      - 'requirements-google.txt'
+      - '.github/workflows/google-oauth.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  google-oauth:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install Flask Werkzeug gunicorn Pillow reportlab
+          python -m pip install -r requirements-google.txt
+      - name: Check Python syntax
+        run: python -m compileall -q platform_app deployment tests/test_google_oauth.py
+      - name: Run isolated Google OAuth functional tests
+        run: python -m unittest discover -s tests -p 'test_google_oauth.py' -v
+      - name: Run direct purchase and rollback tests
+        run: python -m unittest discover -s tests -p 'test_direct_purchases.py' -v
+      - name: Run Bizum approval and credit integrity tests
+        run: python -m unittest discover -s tests -p 'test_bizum_approval.py' -v
+      - name: Run manual Bizum to immediate purchase integration test
+        run: python -m unittest discover -s tests -p 'test_bizum_to_purchase.py' -v

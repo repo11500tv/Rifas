@@ -3,16 +3,20 @@
     "environment": "production",
     "data_root": "/var/www/vhosts/dealfonso.com/rifas",
     "baseline": "/var/www/vhosts/dealfonso.com/rifas",
-    "control_root": "/srv/rifas-deploy/production/control"
+    "control_root": "/var/www/vhosts/dealfonso.com/rifas-deployment/production/control"
+  },
+  "identities": {
+    "owner_uid": 10001,
+    "service_uid": 10002
   },
   "systemd_unit": "rifas-platform.service",
-  "gate": "/srv/rifas-deploy/production/control/maintenance",
-  "target": "/srv/rifas-deploy/production/control/release.json",
+  "gate": "/var/www/vhosts/dealfonso.com/rifas-deployment/production/control/maintenance",
+  "target": "/var/www/vhosts/dealfonso.com/rifas-deployment/production/control/release.json",
   "closed_url": "PUBLIC_HEALTH_PENDING",
   "additional_closed_urls": [],
   "private_url": "http://127.0.0.1:8767/health",
   "gunicorn": {
-    "python": "/srv/rifas-deploy/production/venv/bin/python",
+    "python": "/var/www/vhosts/dealfonso.com/rifas-deployment/production/venv/bin/python",
     "arguments": [
       "--bind",
       "127.0.0.1:8767"

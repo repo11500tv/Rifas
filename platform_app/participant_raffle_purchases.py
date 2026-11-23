@@ -315,8 +315,6 @@ def detail(slug, raffle_id):
         'style="background:#fce8b9"></i>Seleccionado</span>'
         '<span><i class="raffle-dot" '
         'style="background:#f5caca"></i>Asignado</span>'
-        '<span><i class="raffle-dot" '
-        'style="background:#e5e7eb"></i>Reservado</span>'
         '</div>'
     )
 

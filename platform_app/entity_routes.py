@@ -1,7 +1,7 @@
 from flask import render_template
 import html, re, secrets, sqlite3
 from functools import wraps
-from flask import Blueprint, abort, flash, redirect, render_template_string, request, session, url_for, g
+from flask import Blueprint, abort, current_app, flash, redirect, render_template_string, request, session, url_for, g
 from werkzeug.security import check_password_hash, generate_password_hash
 
 bp = Blueprint('entity', __name__, url_prefix='/e/<slug>')
@@ -129,6 +129,7 @@ def home(slug):
 
     return render_template(
         "entity_portal.html",
+        google_enabled="participant_google_oauth" in current_app.extensions,
         slug=slug,
         entity_name=public_name,
         primary_color=safe_color(

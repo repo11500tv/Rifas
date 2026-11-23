@@ -94,7 +94,12 @@ def create_app():
         return inner
     @app.before_request
     def protect():
-        if request.method=='POST' and not (session.get('_csrf') and secrets.compare_digest(request.form.get('_csrf',''),session['_csrf'])): abort(400)
+        if request.method == "POST":
+            expected = session.get("_csrf")
+            if not isinstance(expected, str) or not expected or not secrets.compare_digest(
+                request.form.get("_csrf", "").encode(), expected.encode()
+            ):
+                abort(400)
     @app.get('/')
     def index():
         if not session.get('admin'): return redirect(url_for('login'))
@@ -129,9 +134,6 @@ def create_app():
             if dest.exists(): flash('El directorio ya existe');return redirect(url_for('new_entity'))
             try:
                 with db() as con:
-                    cur=con.execute('INSERT INTO entities(slug,name,admin_email) VALUES(?,?,?)',(slug,name,email))
-                    dest.mkdir(mode=0o700)
-                    for folder in ['data','uploads','config','backups']: (dest/folder).mkdir(mode=0o700)
                     template_db = ROOT / 'central' / 'plantillas' / 'entidad_maestra.sqlite3'
                     if not template_db.is_file():
                         raise RuntimeError('No existe la plantilla maestra')
@@ -155,6 +157,11 @@ def create_app():
                         ).fetchone()
                         if not version or version[0] != REQUIRED_RAFFLE_VERSION:
                             raise RuntimeError('Version de sorteos incorrecta')
+                        if "participant_google_oauth" in app.extensions:
+                            validate_google_schema(check_connection)
+                    cur=con.execute('INSERT INTO entities(slug,name,admin_email) VALUES(?,?,?)',(slug,name,email))
+                    dest.mkdir(mode=0o700)
+                    for folder in ['data','uploads','config','backups']: (dest/folder).mkdir(mode=0o700)
                     entity_db = dest / 'data' / 'rifas.sqlite3'
                     if not template_db.is_file():
                         raise RuntimeError('No existe la plantilla maestra de entidades')
@@ -260,4 +267,19 @@ def create_app():
     app.register_blueprint(prize_delivery_admin_bp)
     from platform_app.prize_notification_settings import bp as prize_notification_settings_bp
     app.register_blueprint(prize_notification_settings_bp)
+    if os.environ.get("RIFAS_GOOGLE_OAUTH_ENABLED") == "1":
+        from contextlib import closing
+        from platform_app.participant_google_oidc_routes import bp as google_login_bp, configure_google
+        from platform_app.participant_google_binding_routes import bp as google_binding_bp
+        from platform_app.participant_google_registration_routes import bp as google_registration_bp
+        from platform_app.participant_google_callback_shared import bp as google_callback_bp
+        from platform_app.participant_google_schema import validate_google_schema
+
+        if not configure_google(app):
+            raise RuntimeError("Falta configuración válida de Google OAuth")
+        template = ROOT / "central" / "plantillas" / "entidad_maestra.sqlite3"
+        with closing(sqlite3.connect(template.as_uri() + "?mode=ro", uri=True)) as connection:
+            validate_google_schema(connection)
+        for blueprint in (google_login_bp, google_binding_bp, google_registration_bp, google_callback_bp):
+            app.register_blueprint(blueprint)
     return app

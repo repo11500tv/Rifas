@@ -63,6 +63,14 @@ class Hooks:
         if self.unit is not None and (not self.control_root or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*\.service", self.unit)
                                       or {"start", "stop"} & settings.keys()):
             raise ValueError("Unidad systemd inválida o combinada con comandos de supervisor")
+        self.service_control = settings.get("service_control")
+        if self.service_control is not None:
+            if (self.unit is None or not isinstance(self.service_control, list)
+                    or not self.service_control
+                    or any(not isinstance(arg, str) or not arg for arg in self.service_control)
+                    or not Path(self.service_control[0]).is_absolute()
+                    or not os.access(self.service_control[0], os.X_OK)):
+                raise ValueError("service_control exige unidad systemd y argv absoluto")
         gunicorn = settings["gunicorn"]
         self.python = Path(gunicorn["python"])
         self.arguments = gunicorn["arguments"]
@@ -99,7 +107,9 @@ class Hooks:
 
     def run(self, key):
         if self.unit is not None and key in {"start", "stop"}:
-            subprocess.run(["/usr/bin/systemctl", key, self.unit], check=True, timeout=40)
+            command = ([*self.service_control, key] if self.service_control is not None
+                       else ["/usr/bin/systemctl", key, self.unit])
+            subprocess.run(command, check=True, timeout=40)
         elif key in self.settings:
             subprocess.run(self.settings[key], check=True, timeout=40)
 

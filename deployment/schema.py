@@ -62,7 +62,9 @@ def version(connection, contract, target):
         "SELECT version FROM module_versions WHERE module=?", (contract["module"],)
     ).fetchall()
     allowed = [contract["to"]] if target else [*contract["from"], contract["to"]]
-    if len(rows) != 1 or rows[0][0] not in allowed:
+    if not rows and None in allowed:
+        return None  # módulo nuevo, sin marcador previo
+    if len(rows) != 1 or rows[0][0] is None or rows[0][0] not in allowed:
         raise ValueError(f"Versión de {contract['module']} incompatible: {rows}")
     return rows[0][0]
 
@@ -88,7 +90,7 @@ def referenced_files(contract, migration):
     if (not isinstance(contract, dict) or set(contract) != {"module", "from", "to", "tables"}
             or not all(isinstance(contract[key], str) and contract[key] for key in ("module", "to"))
             or not isinstance(contract["from"], list)
-            or any(not isinstance(value, str) for value in contract["from"])
+            or any(value is not None and not isinstance(value, str) for value in contract["from"])
             or not isinstance(contract["tables"], dict) or not contract["tables"]):
         raise ValueError("Contrato SQLite inválido")
     paths = set()

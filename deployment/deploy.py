@@ -16,7 +16,7 @@ from uuid import uuid4
 from deployment import approval, backup_integral as snapshot, schema
 from deployment.structure import Structure
 from deployment.intervention import Intervention
-from deployment.artifact import IDENTITY, MANIFEST, NAMESPACE, SIGNATURE, digest, payload_path, platform_version, verify_signature
+from deployment.artifact import IDENTITY, MANIFEST, NAMESPACE, SIGNATURE, digest, payload_path, platform_version, verify_signature, REQUIREMENTS_NAME
 from deployment.backup_sqlite import sha256
 from deployment.backup_integral import atomic_json, sync
 
@@ -34,7 +34,7 @@ def signing_keys(path):
 def validate_artifact(bundle, trusted_signers):
     raw = verify_signature(bundle / MANIFEST, bundle / SIGNATURE, trusted_signers, IDENTITY, NAMESPACE)
     manifest = json.loads(raw)
-    if set(manifest) != {"format", "package", "version", "commit", "recipe", "files",
+    if set(manifest) - {"requirements"} != {"format", "package", "version", "commit", "recipe", "files",
                          "platform_from", "platform_to", "schema", "migration", "checks"} or manifest["format"] != 2:
         raise ValueError("Formato de manifiesto incompatible")
     version = r"[0-9]+\.[0-9]+\.[0-9]+"
@@ -55,6 +55,11 @@ def validate_artifact(bundle, trusted_signers):
     required = {"wsgi.py", "platform_app/__init__.py"} | schema.referenced_files(
         manifest["schema"], manifest["migration"]
     )
+    requirements = manifest.get("requirements")
+    if "requirements" in manifest:
+        if not isinstance(requirements, str) or not re.fullmatch(REQUIREMENTS_NAME, requirements):
+            raise ValueError("Archivo de dependencias inválido")
+        required.add(requirements)
     if not isinstance(files, dict) or not required <= files.keys():
         raise ValueError("Faltan archivos obligatorios")
     observed = set()
@@ -71,9 +76,23 @@ def validate_artifact(bundle, trusted_signers):
             raise ValueError(f"SHA-256 incorrecto: {name}")
         if path.suffix == ".py":
             compile(path.read_bytes(), str(path), "exec")
+    if requirements:
+        pinned_requirements(payload / requirements)
     if platform_version((payload / "platform_app/__init__.py").read_bytes()) != manifest["platform_to"]:
         raise ValueError("Versión de código incompatible")
     return manifest, digest(raw)
+
+
+def pinned_requirements(path):
+    pins = {}
+    for line in path.read_text().splitlines():
+        match = re.fullmatch(r"([a-zA-Z0-9][a-zA-Z0-9_.-]*)==([0-9]+(?:\.[0-9]+)+)", line.strip())
+        if not match or match[1].lower() in pins:
+            raise ValueError("Las dependencias deben declararse con versiones exactas y sin duplicados")
+        pins[match[1].lower()] = match[2]
+    if not pins:
+        raise ValueError("Faltan dependencias fijadas")
+    return pins
 
 
 class Deployment:
@@ -242,6 +261,14 @@ class Deployment:
              "import flask, werkzeug, PIL.Image, reportlab, cryptography.fernet, gunicorn"],
             timeout=30, check=True,
         )
+        if requirements := manifest.get("requirements"):
+            pins = pinned_requirements(bundle / "payload" / requirements)
+            subprocess.run(
+                [str(self.runtime_python), "-I", "-B", "-c",
+                 "import importlib.metadata as m, json, sys; "
+                 "sys.exit(any(m.version(n) != v for n, v in json.loads(sys.argv[1]).items()))",
+                 json.dumps(pins)], timeout=30, check=True,
+            )
         expected = schema.expected_schema(bundle / "payload", manifest["schema"])
         databases = schema.validate(
             self.root, manifest["schema"], expected=expected,
@@ -465,6 +492,17 @@ class Deployment:
 
 
 def main():
+    import os
+    import pwd
+
+    try:
+        expected_uid = pwd.getpwnam("dealfonsocom").pw_uid
+    except KeyError:
+        print("Despliegue: la cuenta dealfonsocom no existe", file=sys.stderr)
+        return 1
+    if os.geteuid() != expected_uid:
+        print("Despliegue: ejecutar el coordinador como dealfonsocom", file=sys.stderr)
+        return 1
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     commands = parser.add_subparsers(dest="command", required=True)
