@@ -96,6 +96,15 @@ class GoogleOAuthTest(unittest.TestCase):
                 portal = client.get("/e/alpha/").get_data(as_text=True)
                 self.assertIn("Nuevo participante", portal)
 
+    def test_registration_links_use_the_access_button_styles(self):
+        self.migrate()
+        client = self.app(enabled=True).test_client()
+        response = client.get("/e/alpha/participantes/registro")
+        self.assertEqual(response.status_code, 200)
+        page = response.get_data(as_text=True)
+        self.assertRegex(page, r'<a href="[^"]+/google/registro/iniciar" style="display:block;[^"]+">Registrarse con Google</a>')
+        self.assertRegex(page, r'<a href="[^"]+" style="display:block;[^"]*background:#17365a;[^"]+">Registrarse por correo</a>')
+
     def migrate(self):
         contract = self.contract
         expected = schema.expected_schema(PROJECT, contract)

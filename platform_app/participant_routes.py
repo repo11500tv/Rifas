@@ -68,6 +68,16 @@ def member_only(fn):
     return wrapped
 
 
+GOOGLE_BUTTON_STYLE = (
+    "display:block;padding:13px;border:1px solid #17365a;"
+    "border-radius:7px;text-decoration:none"
+)
+EMAIL_BUTTON_STYLE = (
+    "display:block;padding:13px;background:#17365a;"
+    "color:white;border-radius:7px;text-decoration:none"
+)
+
+
 @bp.get("/registro")
 def register(slug):
     entity = active_entity(slug)
@@ -78,8 +88,10 @@ def register(slug):
     return layout(
         "Registro de participantes · " + entity["name"],
         f'<div class="card"><h2>Nuevo participante</h2>'
-        f'<p><a href="{google}">Registrarse con Google</a></p>'
-        f'<p><a href="{email}">Registrarse por correo</a></p></div>',
+        f'<p style="text-align:center"><a href="{google}" style="{GOOGLE_BUTTON_STYLE}">'
+        'Registrarse con Google</a></p>'
+        f'<p style="text-align:center"><a href="{email}" style="{EMAIL_BUTTON_STYLE}">'
+        'Registrarse por correo</a></p></div>',
     )
 
 
@@ -104,9 +116,7 @@ def login(slug):
     if google_enabled():
         google_url = url_for("participant_google_oidc.start_google_login", slug=slug)
         google_access = (
-            f'<p><a href="{google_url}" '
-            'style="display:block;padding:13px;border:1px solid #17365a;'
-            'border-radius:7px;text-decoration:none">'
+            f'<p><a href="{google_url}" style="{GOOGLE_BUTTON_STYLE}">'
             'Acceder con Google</a></p>'
         )
 
@@ -116,9 +126,7 @@ def login(slug):
         '<h2>Acceso de participantes</h2>'
         '<p>Selecciona una opción para continuar.</p>'
         + google_access +
-        f'<p><a href="{access_url}" '
-        'style="display:block;padding:13px;background:#17365a;'
-        'color:white;border-radius:7px;text-decoration:none">'
+        f'<p><a href="{access_url}" style="{EMAIL_BUTTON_STYLE}">'
         'Acceder con código por correo</a></p>'
         '</div>'
     )
