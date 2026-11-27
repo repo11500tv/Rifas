@@ -1,0 +1,35 @@
+name: Portability checks
+
+on:
+  push:
+    branches:
+      - feature/portable-installation
+  pull_request:
+    paths:
+      - 'deployment/**'
+      - 'tests/test_*.py'
+      - '.github/workflows/portability.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portability:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check syntax
+        run: python -m compileall -q deployment tests
+      - name: Run portability suite
+        run: python -m unittest discover -s tests -p 'test_portability.py' -v
+      - name: Run synthetic recovery safety tests
+        run: python -m unittest discover -s tests -p 'test_recovery_safety.py' -v
+      - name: Run disposable SQLite rollback tests
+        run: python -m unittest discover -s tests -p 'test_sqlite_rollback.py' -v

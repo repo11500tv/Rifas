@@ -13,7 +13,8 @@ import subprocess
 import sys
 from uuid import uuid4
 
-from deployment import approval, backup_integral as snapshot, schema
+from deployment import approval, backup_integral as snapshot, schema, backup_external
+from deployment.installation import validate_deployment_profile
 from deployment.structure import Structure
 from deployment.intervention import Intervention
 from deployment.artifact import IDENTITY, MANIFEST, NAMESPACE, SIGNATURE, digest, payload_path, platform_version, verify_signature, REQUIREMENTS_NAME
@@ -98,6 +99,7 @@ def pinned_requirements(path):
 class Deployment:
     def __init__(self, config):
         self.config = config
+        self.installation = validate_deployment_profile(config)
         self.name = config["environment"]
         if self.name not in {"synthetic", "staging", "production"}:
             raise ValueError("Entorno desconocido")
@@ -106,6 +108,7 @@ class Deployment:
         self.signers = Path(config["allowed_signers"]).resolve(strict=True)
         self.approvers = Path(config["approval_signers"]).resolve(strict=True)
         self.backup_components = config["backup_components"]
+        self.installation_manifest = config.get("installation_manifest")
         if not isinstance(self.backup_components, list):
             raise ValueError("backup_components debe ser una lista de rutas gestionadas")
         if (self.root.is_relative_to("/root") or self.root == Path("/") or not self.root.is_dir()
@@ -281,10 +284,12 @@ class Deployment:
             if file.is_file()
         )
         managed = snapshot.inventory(self.root, active, self.backup_components, databases)
+        external = (backup_external.inventory_external(self.name, self.installation_manifest)
+                    if self.installation is not None else [])
         managed_size = sum(item["size"] for item in managed
                            if item["kind"] != "directory" and
                            (item["group"] != "data" or Path(item["path"]) not in databases))
-        if shutil.disk_usage(self.state if self.state.is_dir() else self.root).free < payload_size + managed_size + 2 * database_size:
+        if shutil.disk_usage(self.state if self.state.is_dir() else self.root).free < payload_size + managed_size + 2 * database_size + sum(item["size"] for item in external):
             raise ValueError("Espacio insuficiente para release y respaldo SQLite")
         return manifest, fingerprint, databases, active, expected
 
@@ -303,7 +308,8 @@ class Deployment:
                 "package": manifest["package"], "commit": manifest["commit"],
                 "databases": [str(path) for path in databases], "checks": manifest["checks"],
                 "backup_components": ["central", "entidades", *self.backup_components],
-                "installation": str(self.root), "structure": evidence}
+                "installation": str(self.root), "structure": evidence,
+                "external_backup_files": len(self.installation["environments"][self.name]["external_files"]) if self.installation else 0}
 
     def check_operation(self, *, drained=False):
         if self.structure is None:
@@ -374,6 +380,11 @@ class Deployment:
 
     def recover_pending(self, journal):
         phase = journal["phase"]
+        if journal.get("external_snapshot"):
+            backup_external.assert_external_unchanged(
+                self.name, self.state / "runs" / journal["run"] / "backup-external",
+                self.installation_manifest,
+            )
         if phase in {"committed", "rolled_back"}:
             self.finish(journal)
             return
@@ -469,6 +480,11 @@ class Deployment:
                     self.root, previous, self.backup_components, paths, folder / "backup", self.event
                 )
                 snapshot.verify(folder / "backup", journal["snapshot"])
+                if self.installation is not None:
+                    backup_external.backup_external(self.name, folder / "backup-external", self.installation_manifest)
+                    backup_external.verify_external(folder / "backup-external")
+                    journal["external_snapshot"] = True
+                    self.event("external_backup_verified", files=len(self.installation["environments"][self.name]["external_files"]))
                 self.checkpoint(journal, "backed_up")
                 self.checkpoint(journal, "changing")
                 schema.migrate(self.root, paths, manifest["schema"], manifest["migration"], payload, self.event)
@@ -478,8 +494,16 @@ class Deployment:
                 self.hook("activate", self.hooks["activate"], payload)
                 self.hook("ready", self.hooks["ready"], payload)
                 self.check_operation()
+                if journal.get("external_snapshot"):
+                    backup_external.assert_external_unchanged(
+                        self.name, folder / "backup-external", self.installation_manifest,
+                    )
                 for check in manifest["checks"]:
                     self.hook(f"package:{check}", self.checks[check], payload)
+                if journal.get("external_snapshot"):
+                    backup_external.assert_external_unchanged(
+                        self.name, folder / "backup-external", self.installation_manifest,
+                    )
             except Exception as error:
                 try:
                     self.event("failed", run=run, error=type(error).__name__)
